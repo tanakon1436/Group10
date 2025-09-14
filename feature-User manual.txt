@@ -1,3 +1,0 @@
-name : tarathep Madmun
-studen ID : 6610210155
-feature : User manual
