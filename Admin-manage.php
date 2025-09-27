@@ -13,7 +13,7 @@ if ($conn->connect_error) {
 }
 
 // --- ดึงข้อมูลอาจารย์ ---
-$sql = "SELECT * FROM User WHERE role='อาจารย์'";
+$sql = "SELECT * FROM User WHERE role='normal'";
 $result = $conn->query($sql);
 ?>
 
@@ -77,10 +77,12 @@ $result = $conn->query($sql);
       </div>
 
       <!-- ปุ่มเพิ่มอาจารย์ -->
-      <button class="flex items-center space-x-2 px-4 py-2 bg-blue-200 rounded-lg shadow hover:bg-blue-300 mb-4">
-        <span>➕</span>
-        <span>เพิ่มอาจารย์</span>
-      </button>
+      <button onclick="location.href='add-names-teacher-and-admin.php'" 
+        class="flex items-center space-x-2 px-4 py-2 bg-blue-200 rounded-lg shadow hover:bg-blue-300 mb-4">
+    <span>➕</span>
+    <span>เพิ่มอาจารย์</span>
+</button>
+
 
       <!-- การ์ดข้อมูลอาจารย์ -->
       <div class="space-y-4">

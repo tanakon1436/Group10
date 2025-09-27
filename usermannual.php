@@ -8,39 +8,38 @@
     <title>คู่มือการใช้งานระบบ</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-gray-200">
-    <!-- Navbar -->
-    <div class="bg-blue-200 p-4 flex justify-between items-center">
-        <h1 class="text-lg font-bold">คู่มือการใช้งานระบบ</h1>
-        <div class="flex items-center space-x-2">
-            <span class="material-icons">account_circle</span>
+<body class="bg-gray-100">
+
+    <!-- Header -->
+    <header class="bg-blue-100 relative flex justify-between items-center px-4 py-3 shadow">
+        <h1 class="absolute left-1/2 transform -translate-x-1/2 text-lg font-semibold">
+            คู่มือการใช้งานระบบ
+        </h1>
+        <div class="flex items-center space-x-3">
+            <button class="text-xl">👤</button>
         </div>
-    </div>
+    </header>
 
     <div class="flex">
         <!-- Sidebar -->
-        <aside class="w-1/5 bg-blue-100 p-4 min-h-screen">
-            <button onclick="history.back()" class="flex items-center mb-4">
-                <span class="material-icons">arrow_back</span>
-                <span class="ml-2">ย้อนกลับ</span>
-            </button>
+        <aside class="bg-white w-56 min-h-screen shadow-md flex flex-col justify-between">
+            <div>
 
-            <nav>
-                <ul>
-                    <li class="mb-2">
-                        <a href="#" class="flex items-center space-x-2 text-black font-medium hover:text-blue-500">
-                            <span class="material-icons">home</span>
-                            <span>หน้าหลัก</span>
-                        </a>
-                    </li>
-                    <li class="mb-2">
-                        <a href="manual.php" class="flex items-center space-x-2 text-black font-medium hover:text-blue-500">
-                            <span class="material-icons">menu_book</span>
-                            <span>คู่มือ</span>
-                        </a>
-                    </li>
-                </ul>
-            </nav>
+                <nav class="mt-2 flex flex-col">
+                    <a href="HomeallPage-v1.php" class="block p-3 rounded-lg text-gray-700 hover:bg-blue-100 hover:text-blue-700">
+                        <span class="text-xl mr-3">🏠</span> หน้าหลัก
+                    </a>
+                    <a href="manual.php" class="block p-3 rounded-lg mb-3 text-gray-700 bg-blue-100 text-blue-700 font-medium">
+                        <span class="text-xl mr-3">📖</span> คู่มือ
+                    </a>
+                </nav>
+            </div>
+
+            <div class="px-4 py-4 border-t">
+                <a href="logout.php" class="flex items-center text-red-500 hover:underline">
+                    <span class="text-xl mr-3">⏻</span> ออกจากระบบ
+                </a>
+            </div>
         </aside>
 
         <!-- Content -->

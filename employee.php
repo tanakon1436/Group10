@@ -39,7 +39,6 @@
           <span>ค้นหาผลงานตีพิมพ์</span>
         </li>
         <li class="flex items-center space-x-2 hover:bg-gray-100 p-2 rounded cursor-pointer">
-   
           <span>แก้ไขข้อมูลอาจารย์</span>
         </li>
         <li class="flex items-center space-x-2 hover:bg-gray-100 p-2 rounded cursor-pointer">

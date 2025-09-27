@@ -1,4 +1,12 @@
 <?php
+session_start();
+
+// ตรวจสอบว่า user ล็อกอินหรือยัง
+if (!isset($_SESSION['user_id'])) {
+    header("Location: login-v1.php");
+    exit;
+}
+
 // เชื่อมต่อฐานข้อมูล
 $servername = "localhost";
 $username = "root";
@@ -10,10 +18,14 @@ if ($conn->connect_error) {
     die("Connection failed: " . $conn->connect_error);
 }
 
-// สมมติว่า user ที่ login อยู่มี id = 1
-$user_id = 1;
-$sql = "SELECT first_name, last_name, role FROM User WHERE User_id = $user_id";
-$result = $conn->query($sql);
+// ดึงข้อมูลผู้ใช้จาก session
+$user_id = $_SESSION['user_id'];
+
+$sql = "SELECT first_name, last_name, role FROM User WHERE User_id = ?";
+$stmt = $conn->prepare($sql);
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$result = $stmt->get_result();
 $user = $result->fetch_assoc();
 ?>
 <!DOCTYPE html>
@@ -43,57 +55,59 @@ $user = $result->fetch_assoc();
   </div>
 </header>
 
-
-  <div class="flex">
-    <!-- Sidebar -->
-    <aside class="bg-white w-56 min-h-screen shadow-md flex flex-col justify-between">
-      <div>
-        <div class="flex items-center px-4 py-4 border-b">
-          <div class="text-2xl">👤</div>
-          <span class="ml-3">
-            <?php echo   $user['first_name'] . " " . $user['last_name']; ?>
-          </span>
-        </div>
-        <nav class="mt-2 flex flex-col">
-          <a href="index.php" class="flex items-center px-4 py-2 hover:bg-blue-50 transition font-semibold">
-            <span class="text-xl mr-3">🏠</span> หน้าหลัก
-          </a>
-          <a href="history.php" class="flex items-center px-4 py-2 hover:bg-blue-50 transition">
-            <span class="text-xl mr-3">⏳</span> ประวัติการแก้ไข
-          </a>
-          <a href="manual.php" class="flex items-center px-4 py-2 hover:bg-blue-50 transition">
-            <span class="text-xl mr-3">📖</span> คู่มือการใช้งาน
-          </a>
-          <a href="contact.php" class="flex items-center px-4 py-2 hover:bg-blue-50 transition">
-            <span class="text-xl mr-3">📞</span> ช่องทางติดต่อ
-          </a>
-        </nav>
+<div class="flex">
+  <!-- Sidebar -->
+  <aside class="bg-white w-56 min-h-screen shadow-md flex flex-col justify-between">
+    <div>
+      <div class="flex items-center px-4 py-4 border-b">
+        <div class="text-2xl">👤</div>
+        <span class="ml-3">
+          <?php echo htmlspecialchars($user['first_name'] . " " . $user['last_name']); ?>
+        </span>
       </div>
+      <nav class="mt-2 flex flex-col">
+        <a href="Home-PR.php" class="block p-2 rounded-lg mb-2 text-blue-700 bg-blue-100 hover:bg-blue-200 hover:text-blue-900">
+          <span class="text-xl mr-3">🏠</span> หน้าหลัก
+        </a>
+        <a href="history.php" class="flex items-center px-4 py-2 hover:bg-blue-50 transition">
+          <span class="text-xl mr-3">⏳</span> ประวัติการแก้ไข
+        </a>
+        <a href="usermannual.php" class="flex items-center px-4 py-2 hover:bg-blue-50 transition">
+          <span class="text-xl mr-3">📖</span> คู่มือการใช้งาน
+        </a>
+        <a href="contact.php" class="flex items-center px-4 py-2 hover:bg-blue-50 transition">
+          <span class="text-xl mr-3">📞</span> ช่องทางติดต่อ
+        </a>
+      </nav>
+    </div>
 
-      <div class="px-4 py-4 border-t">
-        <a href="logout.php" class="flex items-center text-red-500 hover:underline">
-          <span class="text-xl mr-3">⏻</span> ออกจากระบบ
-        </a>
-      </div>
-    </aside>
+    <div class="px-4 py-4 border-t">
+      <a href="logout.php" class="flex items-center text-red-500 hover:underline">
+        <span class="text-xl mr-3">⏻</span> ออกจากระบบ
+      </a>
+    </div>
+  </aside>
 
-    <!-- Main Content -->
-    <main class="flex-1 flex flex-col items-center justify-center p-6">
-      <div class="space-x-6">
-        <a href="publications.php">
-          <button class="bg-blue-100 px-6 py-3 rounded-lg shadow hover:bg-blue-200 transition">
-            รายการผลงานตีพิมพ์
-          </button>
-        </a>
-        <a href="add_publication.php">
-          <button class="bg-blue-100 px-6 py-3 rounded-lg shadow hover:bg-blue-200 transition">
-            เพิ่มผลงานตีพิมพ์
-          </button>
-        </a>
-      </div>
-    </main>
-  </div>
+  <!-- Main Content -->
+  <main class="flex-1 flex flex-col items-center justify-center p-6">
+    <div class="space-x-6">
+      <a href="publications.php">
+        <button class="bg-blue-100 px-6 py-3 rounded-lg shadow hover:bg-blue-200 transition">
+          รายการผลงานตีพิมพ์
+        </button>
+      </a>
+      <a href="add_publication.php">
+        <button class="bg-blue-100 px-6 py-3 rounded-lg shadow hover:bg-blue-200 transition">
+          เพิ่มผลงานตีพิมพ์
+        </button>
+      </a>
+    </div>
+  </main>
+</div>
 
 </body>
 </html>
-<?php $conn->close(); ?>
+<?php
+$stmt->close();
+$conn->close();
+?>
