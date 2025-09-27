@@ -17,8 +17,8 @@ if($conn->connect_error) die("Connection failed: ".$conn->connect_error);
 <aside class="w-64 bg-white shadow-lg p-6 flex flex-col items-center sticky top-0 h-screen">
     <h2 class="text-2xl font-bold mb-6">เมนู</h2>
     <nav class="w-full">
-        <a href="#" class="block p-3 rounded-lg mb-3 text-gray-700 hover:bg-blue-100 hover:text-blue-700">หน้าหลัก</a>
-        <a href="#" class="block p-3 rounded-lg text-gray-700 hover:bg-blue-100 hover:text-blue-700">คู่มือ</a>
+        <a href="#" class="block p-3 rounded-lg mb-3 text-blue-700 bg-blue-100 hover:bg-blue-200 hover:text-blue-900">หน้าหลัก</a>
+        <a href="usermannual.php" class="block p-3 rounded-lg text-gray-700 hover:bg-blue-100 hover:text-blue-700">คู่มือ</a>
     </nav>
 </aside>
 
@@ -34,7 +34,7 @@ if($conn->connect_error) die("Connection failed: ".$conn->connect_error);
     <div class="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-6">
     <?php
 // ดึงข้อมูลผู้ใช้พร้อม path รูป
-$users = $conn->query("SELECT User_id, first_name, last_name, avatar FROM User");
+$users = $conn->query("SELECT User_id, first_name, last_name, avatar FROM User WHERE role='normal' ORDER BY first_name");
 while($u = $users->fetch_assoc()){
     // กรณีไม่มีรูป ใช้รูป default
     $img = $u['avatar'] ? 'img/'.$u['avatar'] : 'img/default-avatar.png';
