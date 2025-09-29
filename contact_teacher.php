@@ -232,7 +232,7 @@ if (isset($_GET['update_status']) && $_GET['update_status'] === 'success') {
                     </span>
                 <?php endif; ?>
             </a>
-            <a href="#" title="โปรไฟล์ผู้ใช้งาน">
+            <a href="staff_edit_profile.php" title="โปรไฟล์ผู้ใช้งาน">
                 <i class="fas fa-user-circle text-xl"></i>
             </a>
         </div>

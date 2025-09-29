@@ -25,9 +25,18 @@ if($conn->connect_error) {
     $db_error = null;
 }
 
-// --- กำหนดค่าเริ่มต้นสำหรับตัวแปรสถานะ ---
+// --- กำหนดค่าคงที่และตัวแปรเริ่มต้น ---
 $status_message = null; 
 $status_type = 'info'; 
+
+// กำหนดการแมปประเภทผลงานสำหรับ Dropdown (ภาษาอังกฤษ => ภาษาไทย)
+$publication_types = [
+    'all' => '-- ทุกประเภท --',
+    'Journal' => 'บทความวารสาร',
+    'Conference' => 'นำเสนอในการประชุม',
+    'Thesis' => 'วิทยานิพนธ์/ภาคนิพนธ์',
+    'Other' => 'อื่นๆ',
+];
 
 // ดึงข้อมูลผู้ใช้ที่เข้าสู่ระบบจริงจาก SESSION
 $current_user_name = $_SESSION['first_name'] . ' ' . $_SESSION['last_name'];
@@ -46,6 +55,8 @@ if (!$db_error) {
 
 // 3. การจัดการการค้นหาและข้อมูลตัวกรอง (Filters)
 $search_query = $_GET['search'] ?? '';
+// NEW: รับค่าตัวกรองประเภทผลงาน (pub_type)
+$selected_type = $_GET['pub_type'] ?? 'all'; 
 
 // === เริ่มดึงข้อมูลจริงสำหรับตัวกรอง ===
 
@@ -67,10 +78,9 @@ if (!$db_error) {
     $authors_res = $conn->query($sql_authors);
     if ($authors_res) {
         while($author = $authors_res->fetch_assoc()){
-            // *** แก้ไข: เพิ่ม 'first_name_only' สำหรับใช้ในการค้นหาตามที่ผู้ใช้ร้องขอ ***
             $filter_authors[] = [
                 'name' => $author['first_name'].' '.$author['last_name'], 
-                'first_name_only' => $author['first_name'], // เก็บแค่ชื่อหน้าไว้สำหรับการค้นหา
+                'first_name_only' => $author['first_name'], 
                 'count' => (int)$author['count'], 
                 'id' => $author['User_id']
             ];
@@ -107,7 +117,7 @@ if (!$db_error) {
     if ($years_res) {
         while($year = $years_res->fetch_assoc()){
             $filter_years[] = [
-                'range' => $year['publish_year'], // ใช้ปีเดียวแทนช่วงปีเพื่อให้ง่ายต่อการแสดงผล
+                'range' => $year['publish_year'], 
                 'count' => (int)$year['count']
             ];
         }
@@ -117,6 +127,7 @@ if (!$db_error) {
 // === สิ้นสุดการดึงข้อมูลจริงสำหรับตัวกรอง ===
 
 // 4. การจัดการ POST Request เพื่ออนุมัติ/ปฏิเสธ (หากฟอร์มนี้ถูกใช้ร่วมกับหน้า approve)
+// ... [โค้ดส่วนนี้ยังคงเดิม] ...
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$db_error) {
     if (isset($_POST['action'], $_POST['pub_id'])) {
@@ -157,7 +168,7 @@ if (isset($_GET['update_status']) && $_GET['update_status'] === 'success') {
 }
 
 // =================================================================
-// 5. โค้ดส่วนหลัก: การจัดการการค้นหาผลงาน
+// 5. โค้ดส่วนหลัก: การจัดการการค้นหาผลงาน (อัปเดตเงื่อนไขตัวกรองประเภท)
 // =================================================================
 $search_results = [];
 if ($search_query && !$db_error) {
@@ -167,7 +178,7 @@ if ($search_query && !$db_error) {
     // ตรวจสอบว่าเป็นตัวเลข 4 หลักหรือไม่ (ปี) เพื่อใช้ในการค้นหา publish_year
     $is_year = (bool) preg_match('/^\d{4}$/', $search_query);
 
-    // SQL: ค้นหาใน Title, Author Name (first_name, last_name), Year และดึง file_path มาด้วย
+    // SQL: ค้นหาใน Title, Author Name (first_name, last_name), Year, และเพิ่มเงื่อนไข Type
     $sql_search = "
         SELECT 
             p.Pub_id,
@@ -175,28 +186,42 @@ if ($search_query && !$db_error) {
             p.type,
             p.publish_year,
             p.status,
-            p.file_path,  /* <--- ใช้ file_path ตาม DB ที่ให้มา */
+            p.file_path,
             u.first_name,
             u.last_name
         FROM Publication p
         JOIN User u ON p.Author_id = u.User_id
         WHERE
-            p.title LIKE ? OR
-            u.first_name LIKE ? OR
-            u.last_name LIKE ? " . 
-            ($is_year ? "OR p.publish_year = ?" : "") . "
+            (p.title LIKE ? OR u.first_name LIKE ? OR u.last_name LIKE ? " . 
+            ($is_year ? "OR p.publish_year = ?" : "") . ")
+            " . ($selected_type !== 'all' ? " AND p.type = ?" : "") . " 
         ORDER BY p.publish_year DESC, p.title ASC";
 
     $stmt_search = $conn->prepare($sql_search);
 
     if ($stmt_search) {
-        // ผูกค่าตัวแปร: "s" สำหรับ string, "i" สำหรับ integer (เฉพาะเมื่อค้นหาเป็นปี)
+        
+        $params = [];
+        $types = '';
+
+        // 1. Search terms (Always 3 strings)
+        $params[] = $search_param; $types .= 's';
+        $params[] = $search_param; $types .= 's';
+        $params[] = $search_param; $types .= 's';
+
+        // 2. Year term (Conditional string)
         if ($is_year) {
-            // "sssi": title, first_name, last_name (string), publish_year (integer/string)
-            $stmt_search->bind_param("sssi", $search_param, $search_param, $search_param, $search_query);
-        } else {
-            // "sss": title, first_name, last_name (string)
-            $stmt_search->bind_param("sss", $search_param, $search_param, $search_param);
+            $params[] = $search_query; $types .= 's';
+        }
+        
+        // 3. Type filter (Conditional string)
+        if ($selected_type !== 'all' && array_key_exists($selected_type, $publication_types)) {
+            $params[] = $selected_type; $types .= 's';
+        }
+
+        // Bind parameters dynamically using the spread operator
+        if (!empty($params)) {
+             $stmt_search->bind_param($types, ...$params); 
         }
 
         if ($stmt_search->execute()) {
@@ -317,7 +342,7 @@ if ($search_query && !$db_error) {
                     </span>
                 <?php endif; ?>
             </a>
-            <a href="#" title="โปรไฟล์ผู้ใช้งาน">
+            <a href="staff_edit_profile.php" title="โปรไฟล์ผู้ใช้งาน">
                 <i class="fas fa-user-circle text-xl"></i>
             </a>
         </div>
@@ -338,7 +363,7 @@ if ($search_query && !$db_error) {
         <?php endif; ?>
         
         <section class="bg-white p-6 rounded-2xl shadow-2xl">
-            <form method="GET" action="staffPage.php">
+            <form method="GET" action="staffPage.php" id="mainSearchForm">
                 <div class="flex items-center mb-6">
                     <input type="text" name="search" placeholder="ค้นหาชื่อผลงาน, ชื่ออาจารย์, หรือปี..." 
                            value="<?= htmlspecialchars($search_query); ?>"
@@ -346,6 +371,8 @@ if ($search_query && !$db_error) {
                     <button type="submit" class="bg-blue-600 text-white p-4 px-8 rounded-r-full font-bold hover:bg-blue-700 transition-colors duration-200 text-lg shadow-lg">
                         <i class="fas fa-search"></i> ค้นหา
                     </button>
+                    <!-- Hidden input เพื่อส่งค่า pub_type ไปด้วยในการค้นหาหลัก -->
+                    <input type="hidden" name="pub_type" value="<?= htmlspecialchars($selected_type); ?>">
                 </div>
             </form>
 
@@ -362,7 +389,7 @@ if ($search_query && !$db_error) {
                             <?php foreach ($filter_works as $work): ?>
                                 <!-- เพิ่ม onclick เพื่อให้คลิกแล้วค้นหา -->
                                 <div class="text-gray-700 text-base leading-snug cursor-pointer p-2 rounded-lg hover:bg-blue-100 transition-colors duration-150"
-                                     onclick="document.getElementsByName('search')[0].value='<?= htmlspecialchars(addslashes($work)); ?>'; document.forms[0].submit();">
+                                     onclick="document.getElementsByName('search')[0].value='<?= htmlspecialchars(addslashes($work)); ?>'; document.getElementById('mainSearchForm').submit();">
                                     <span class="truncate block"><?= htmlspecialchars($work); ?></span>
                                 </div>
                             <?php endforeach; ?>
@@ -382,7 +409,7 @@ if ($search_query && !$db_error) {
                             <?php foreach ($filter_authors as $author): ?>
                                 <!-- แก้ไข: ใช้ 'first_name_only' ในการค้นหาตามคำขอของผู้ใช้ -->
                                 <div class="flex justify-between items-center flex-nowrap text-gray-700 cursor-pointer p-2 rounded-lg hover:bg-blue-100 transition-colors duration-150"
-                                     onclick="document.getElementsByName('search')[0].value='<?= htmlspecialchars(addslashes($author['first_name_only'])); ?>'; document.forms[0].submit();">
+                                     onclick="document.getElementsByName('search')[0].value='<?= htmlspecialchars(addslashes($author['first_name_only'])); ?>'; document.getElementById('mainSearchForm').submit();">
                                     <span class="font-medium truncate"><?= htmlspecialchars($author['name']); ?></span>
                                     <span class="bg-blue-600 text-white text-xs font-bold px-3 py-1 rounded-full shadow-md ml-2 flex-shrink-0"><?= $author['count']; ?> ผลงาน</span>
                                 </div>
@@ -403,7 +430,7 @@ if ($search_query && !$db_error) {
                             <?php foreach ($filter_years as $year): ?>
                                 <!-- เพิ่ม onclick เพื่อให้คลิกแล้วค้นหา -->
                                 <div class="flex justify-between items-center flex-nowrap text-gray-700 cursor-pointer p-2 rounded-lg hover:bg-blue-100 transition-colors duration-150"
-                                     onclick="document.getElementsByName('search')[0].value='<?= htmlspecialchars(addslashes($year['range'])); ?>'; document.forms[0].submit();">
+                                     onclick="document.getElementsByName('search')[0].value='<?= htmlspecialchars(addslashes($year['range'])); ?>'; document.getElementById('mainSearchForm').submit();">
                                     <span class="font-medium"><?= htmlspecialchars($year['range']); ?></span>
                                     <span class="bg-blue-600 text-white text-xs font-bold px-3 py-1 rounded-full shadow-md ml-2 flex-shrink-0"><?= number_format($year['count']); ?> รายการ</span>
                                 </div>
@@ -419,6 +446,36 @@ if ($search_query && !$db_error) {
                     <h2 class="text-2xl font-bold text-gray-800 mb-6 border-b pb-2">
                         ผลการค้นหาสำหรับ "<span class="text-blue-600"><?= htmlspecialchars($search_query); ?></span>" (พบ <?= count($search_results); ?> รายการ)
                     </h2>
+                    
+                    <!-- NEW: Publication Type Filter Form -->
+                    <form method="GET" action="staffPage.php" class="mb-6 p-4 bg-gray-50 rounded-xl border border-gray-200 shadow-inner flex flex-col md:flex-row items-stretch md:items-center space-y-3 md:space-y-0 md:space-x-4">
+                        <label for="pub_type_filter" class="text-gray-700 font-semibold flex-shrink-0">กรองตามประเภทผลงาน:</label>
+                        
+                        <!-- Hidden input to maintain the original search query -->
+                        <input type="hidden" name="search" value="<?= htmlspecialchars($search_query); ?>">
+
+                        <!-- Dropdown Filter -->
+                        <select name="pub_type" id="pub_type_filter" 
+                                class="border border-gray-300 rounded-lg p-2.5 text-base focus:ring-blue-500 focus:border-blue-500 transition w-full md:w-auto flex-grow">
+                            <?php foreach($publication_types as $key => $value): ?>
+                                <option value="<?= htmlspecialchars($key) ?>"
+                                        <?= $selected_type === $key ? 'selected' : '' ?>>
+                                    <?= htmlspecialchars($value) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                        
+                        <button type="submit" class="bg-blue-600 text-white py-2 px-4 rounded-lg font-semibold hover:bg-blue-700 transition-colors duration-200 flex-shrink-0 shadow-md">
+                            <i class="fas fa-filter mr-1"></i> ใช้ตัวกรอง
+                        </button>
+                        <?php if ($selected_type !== 'all'): ?>
+                            <a href="staffPage.php?search=<?= urlencode($search_query); ?>" class="text-red-500 hover:text-red-700 transition text-sm flex items-center flex-shrink-0 justify-center md:justify-start">
+                                <i class="fas fa-times-circle mr-1"></i> ล้างตัวกรองประเภท
+                            </a>
+                        <?php endif; ?>
+                    </form>
+                    <!-- END: Publication Type Filter Form -->
+
 
                     <?php if (!empty($search_results)): ?>
                         <div class="space-y-6">
@@ -459,7 +516,13 @@ if ($search_query && !$db_error) {
                         </div>
                     <?php else: ?>
                         <div class="p-6 bg-yellow-50 border border-yellow-300 rounded-xl text-yellow-800 shadow-md">
-                            <p class="font-semibold"><i class="fas fa-exclamation-triangle mr-2"></i> ไม่พบผลงานที่ตรงกับคำค้นหา "<?= htmlspecialchars($search_query); ?>"</p>
+                            <p class="font-semibold">
+                                <i class="fas fa-exclamation-triangle mr-2"></i> 
+                                ไม่พบผลงานที่ตรงกับคำค้นหา "<?= htmlspecialchars($search_query); ?>" 
+                                <?php if ($selected_type !== 'all'): ?>
+                                    ในประเภท **<?= htmlspecialchars($publication_types[$selected_type] ?? $selected_type); ?>**
+                                <?php endif; ?>
+                            </p>
                         </div>
                     <?php endif; ?>
                 </div>
@@ -555,6 +618,15 @@ if ($search_query && !$db_error) {
         if (e.target === pdfModal) {
             closePdfModal();
         }
+    });
+    
+    // อัปเดตฟอร์มหลักเมื่อมีการคลิก Quick Filter
+    document.querySelectorAll('.space-y-3 > div').forEach(item => {
+        item.addEventListener('click', function(e) {
+            // ป้องกันการทำงานซ้ำซ้อน เพราะเราใช้ onclick ใน HTML ด้วย
+            e.preventDefault(); 
+            // โค้ดที่นี่จะไม่รันเนื่องจากโค้ดเดิมใช้ onclick ใน HTML แต่เป็นหลักการที่ดีในการใช้ JS
+        });
     });
 </script>
 
