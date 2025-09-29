@@ -30,28 +30,98 @@ $user = $result->fetch_assoc();
 $current_user_name = htmlspecialchars($user['first_name'] . " " . $user['last_name']);
 $stmt->close();
 
-$message = '';
+// --- กำหนดค่าเริ่มต้นสำหรับตัวแปรสถานะ ---
+$message = ''; // ใช้สำหรับ Form submission result หรือ Notification status
 $message_type = ''; // 'success' or 'error'
-$title = ''; // สำหรับเก็บค่าเก่าในฟอร์ม
-$publish_year = ''; // ใช้เก็บค่าเดิมที่ผู้ใช้กรอก (ค.ศ.)
+
+$title = ''; 
+$publish_year = ''; 
 $pub_type = '';
+
+// *************************************************************
+// A. การจัดการการแจ้งเตือน (Notifications)
+// *************************************************************
+
+// A.1 ดึงข้อมูลการแจ้งเตือนจริงจากฐานข้อมูล
+$notifications = [];
+$unread_count = 0;
+
+$sql_noti = "SELECT Noti_id, message, date_time, status FROM Notification WHERE User_id = ? ORDER BY date_time DESC";
+$stmt_noti = $conn->prepare($sql_noti);
+$stmt_noti->bind_param("i", $user_id);
+$stmt_noti->execute();
+$result_noti = $stmt_noti->get_result();
+
+while ($row = $result_noti->fetch_assoc()) {
+    $is_read = ($row['status'] === 'read');
+    
+    if (!$is_read) {
+        $unread_count++;
+    }
+
+    // คำนวณเวลาที่ผ่านมา (อย่างง่าย)
+    $timestamp = strtotime($row['date_time']);
+    $time_diff = time() - $timestamp;
+
+    if ($time_diff < 60) {
+        $time_ago = $time_diff . ' วินาทีที่แล้ว';
+    } elseif ($time_diff < 3600) {
+        $time_ago = floor($time_diff / 60) . ' นาทีที่แล้ว';
+    } elseif ($time_diff < 86400) {
+        $time_ago = floor($time_diff / 3600) . ' ชั่วโมงที่แล้ว';
+    } else {
+        $time_ago = date('d/m/Y H:i', $timestamp);
+    }
+
+    $notifications[] = [
+        'id' => $row['Noti_id'],
+        'message' => htmlspecialchars($row['message']), 
+        'time' => $time_ago,
+        'is_read' => $is_read
+    ];
+}
+$stmt_noti->close();
+
+// A.2 การจัดการ POST Request สำหรับ Mark All As Read
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mark_read_all'])) {
+    $sql_update = "UPDATE Notification SET status = 'read' WHERE User_id = ? AND status = 'unread'";
+    $stmt_update = $conn->prepare($sql_update);
+    $stmt_update->bind_param("i", $user_id);
+
+    if ($stmt_update->execute()) {
+        $stmt_update->close();
+        // Redirect เพื่อป้องกัน Form Resubmission และแสดงข้อความสถานะ
+        header("Location: add_publication.php?update_status=success_read");
+        exit();
+    } else {
+        $stmt_update->close();
+        $message = "❌ เกิดข้อผิดพลาดในการทำเครื่องหมายว่าอ่านแล้ว: " . $conn->error;
+        $message_type = 'error';
+    }
+}
+
+// A.3 ตรวจสอบสถานะหลังการ Redirect
+if (isset($_GET['update_status']) && $_GET['update_status'] === 'success_read') {
+    $message = "✅ ทำเครื่องหมายการแจ้งเตือนทั้งหมดว่าอ่านแล้วเรียบร้อย";
+    $message_type = 'success';
+}
+
 
 // *************************************************************
 // 4. Form Submission Logic (POST)
 // *************************************************************
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['mark_read_all'])) {
     // 4a. Get and sanitize input
     $title = trim($_POST['title'] ?? '');
-    // *** แก้ไข: รับค่าเป็น ค.ศ. (C.E.) โดยตรง ***
     $publish_year_ce = (int)($_POST['publish_year'] ?? 0); 
     $pub_type = trim($_POST['pub_type'] ?? ''); 
+    $publish_year = $publish_year_ce; // เก็บค่าเดิมไว้แสดงผลในฟอร์ม
 
     // 4b. File upload handling 
     $file_path = NULL;
     $target_dir = "uploads/"; 
 
     if (!empty($_FILES['publication_file']['name']) && $_FILES['publication_file']['error'] == 0) {
-        // ตรวจสอบและสร้างโฟลเดอร์ uploads/ หากยังไม่มี
         if (!is_dir($target_dir)) {
              @mkdir($target_dir, 0777, true); 
         }
@@ -70,7 +140,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     
     if ($message_type === 'error') {
-        // หากมี error จากการอัปโหลดไฟล์ ให้ข้ามไปแสดงข้อความ
         goto end_submission;
     }
 
@@ -80,38 +149,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $message_type = 'error';
     } else if ($message_type !== 'error') {
         
-        // *** โค้ดแก้ไข 1: ลบการแปลง พ.ศ. เป็น ค.ศ. เพราะรับค่ามาเป็น ค.ศ. แล้ว ***
-        // $publish_year_ce = $publish_year_be - 543; 
-        
-        // ตรวจสอบปีที่พิมพ์ (ใช้ $publish_year_ce โดยตรง)
-        // อนุญาตให้กรอกได้ถึงปีปัจจุบัน (date("Y")) หรือปีถัดไป (+1)
         if ($publish_year_ce < 1900 || $publish_year_ce > (date("Y") + 1)) {
             $message = 'ข้อผิดพลาด: ปีที่พิมพ์เผยแพร่ไม่ถูกต้อง กรุณาตรวจสอบปี (ค.ศ) อีกครั้ง';
             $message_type = 'error';
-            // เก็บค่า ค.ศ. เดิมไว้แสดงผลในฟอร์ม
-            $publish_year = $publish_year_ce;
+            goto end_submission;
+        }
+
+        // 4d. ตรวจสอบชื่อผลงานซ้ำ (Duplicate Title Check)
+        $check_sql = "SELECT COUNT(*) FROM Publication WHERE title = ?";
+        $stmt_check = $conn->prepare($check_sql);
+        $stmt_check->bind_param("s", $title);
+        $stmt_check->execute();
+        $stmt_check->bind_result($count);
+        $stmt_check->fetch();
+        $stmt_check->close();
+
+        if ($count > 0) {
+            $message = 'ข้อผิดพลาด: ชื่อผลงานตีพิมพ์ **"' . htmlspecialchars($title) . '"** มีอยู่ในระบบแล้ว กรุณาใช้ชื่ออื่นหรือแก้ไขผลงานเดิม';
+            $message_type = 'error';
             goto end_submission;
         }
 
         $status = 'waiting'; 
-        $pub_year_str = (string)$publish_year_ce; // *** ใช้ปี ค.ศ. บันทึกลงฐานข้อมูล ***
+        $pub_year_str = (string)$publish_year_ce; 
 
         try {
             $conn->begin_transaction();
             
-            // 4d. Insert into Publication table
+            // 4e. Insert into Publication table
             $pub_sql = "INSERT INTO Publication (Author_id, title, publish_year, type, file_path, status) 
                         VALUES (?, ?, ?, ?, ?, ?)";
             $stmt_pub = $conn->prepare($pub_sql);
             
-            // ใช้ $pub_year_str (ปี ค.ศ.)
             $stmt_pub->bind_param("isssss", $user_id, $title, $pub_year_str, $pub_type, $file_path, $status);
             $stmt_pub->execute();
 
             $new_pub_id = $conn->insert_id;
             $stmt_pub->close();
             
-            // 4e. Insert into PublicationHistory table
+            // 4f. Insert into PublicationHistory table
             $history_action = 'Added new publication'; 
             $history_sql = "INSERT INTO PublicationHistory (Pub_id, Edited_by, edit_date, change_detail) 
                             VALUES (?, ?, NOW(), ?)";
@@ -133,14 +209,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $conn->rollback();
             $message = "เกิดข้อผิดพลาดในการบันทึกข้อมูล: " . $e->getMessage();
             $message_type = 'error';
-            $publish_year = $publish_year_ce; // เก็บค่า ค.ศ. เดิมไว้แสดงผลในฟอร์ม
         }
     }
 }
 end_submission:
-// หากเกิดข้อผิดพลาด ให้ใช้ค่า $publish_year (ค.ศ.) ในการแสดงผลฟอร์ม
-if ($message_type === 'error' && $publish_year === '') {
-    $publish_year = $_POST['publish_year'] ?? '';
+if ($message_type === 'error' && (empty($publish_year) || $publish_year == 0) && isset($_POST['publish_year'])) {
+    $publish_year = htmlspecialchars($_POST['publish_year']);
 }
 ?>
 <!DOCTYPE html>
@@ -181,6 +255,9 @@ if ($message_type === 'error' && $publish_year === '') {
         background-color: #dbeafe !important; /* bg-blue-100 */
         font-weight: 600;
       }
+      /* Status Message Styling */
+      .status-success { background-color: #d1fae5; color: #065f46; border-color: #34d399; }
+      .status-error { background-color: #fee2e2; color: #991b1b; border-color: #f87171; }
   </style>
 </head>
 <body class="flex min-h-screen font-sans bg-gray-100">
@@ -230,8 +307,13 @@ if ($message_type === 'error' && $publish_year === '') {
         <h1 class="text-3xl font-bold text-gray-800">เพิ่มผลงานตีพิมพ์ใหม่</h1>
         
         <div class="flex items-center space-x-4 right-icons">
-            <a href="#" title="แจ้งเตือน" class="relative">
+            <a href="#" id="notification-bell" title="แจ้งเตือน" class="relative">
                 <i class="fas fa-bell text-2xl"></i>
+                <?php if ($unread_count > 0): ?>
+                    <span class="absolute top-0 right-0 block h-5 w-5 rounded-full ring-2 ring-white bg-red-500 text-white text-xs font-bold flex items-center justify-center -mt-1 -mr-1">
+                        <?= $unread_count; ?>
+                    </span>
+                <?php endif; ?>
             </a>
             <a href="edit_profile.php" title="แก้ไขข้อมูลส่วนตัว">
                 <i class="fas fa-user-circle text-2xl"></i>
@@ -243,7 +325,8 @@ if ($message_type === 'error' && $publish_year === '') {
     </header>
 
     <?php if ($message): ?>
-        <div class="p-4 mb-4 rounded-lg <?= $message_type === 'success' ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-red-100 text-red-700 border border-red-200'; ?>">
+        <div class="p-4 mb-4 rounded-lg 
+            <?= $message_type === 'success' ? 'status-success border-green-500 border-l-4' : 'status-error border-red-500 border-l-4'; ?>">
             <p class="font-semibold"><?= htmlspecialchars($message); ?></p>
         </div>
     <?php endif; ?>
@@ -263,7 +346,6 @@ if ($message_type === 'error' && $publish_year === '') {
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
-                    <!-- *** แก้ไข: ปรับ placeholder และ max ให้ตรงกับ ค.ศ. (C.E.) *** -->
                     <label for="publish_year" class="block text-sm font-medium text-gray-700 mb-1">ปีที่พิมพ์เผยแพร่ (ค.ศ.) <span class="text-red-500">*</span></label>
                     <input type="number" name="publish_year" id="publish_year" required 
                            class="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-blue-500 focus:border-blue-500"
@@ -306,6 +388,94 @@ if ($message_type === 'error' && $publish_year === '') {
     </section>
 </main>
 </div>
+
+<!-- Notification Modal -->
+<div id="notification-modal" class="fixed inset-0 bg-gray-900 bg-opacity-50 hidden z-50 flex items-center justify-center">
+    <div class="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4 overflow-hidden transform transition-all">
+        <div class="flex justify-between items-center p-5 border-b bg-blue-50">
+            <h3 class="text-xl font-bold text-blue-700">
+                <i class="fas fa-bell mr-2"></i> ข้อความแจ้งเตือน (<?= $unread_count; ?> ข้อความใหม่)
+            </h3>
+            <button id="close-modal-btn" class="text-gray-500 hover:text-gray-700 text-2xl">
+                &times;
+            </button>
+        </div>
+
+        <div class="p-4 max-h-96 overflow-y-auto space-y-3">
+            <?php if (empty($notifications)): ?>
+                <p class="text-gray-500 text-center py-4">ไม่มีข้อความแจ้งเตือน</p>
+            <?php else: ?>
+                <?php foreach ($notifications as $notification): ?>
+                    <div class="p-3 rounded-lg border 
+                        <?= $notification['is_read'] ? 'bg-gray-50 border-gray-200 text-gray-700' : 'bg-blue-100 border-blue-300 font-semibold shadow-sm'; ?>">
+                        <p class="text-sm flex items-center">
+                            <i class="<?= $notification['is_read'] ? 'far fa-envelope-open text-gray-500' : 'fas fa-envelope text-blue-600'; ?> mr-2"></i>
+                            <span class="font-bold">ข้อความ:</span>
+                        </p>
+                        <!-- ข้อความที่บันทึกไว้ใน DB ซึ่งรวม Sender เข้ามาแล้ว -->
+                        <p class="mt-1 ml-5 text-base leading-snug break-words"><?= $notification['message']; ?></p> 
+                        <p class="text-xs text-right mt-1 <?= $notification['is_read'] ? 'text-gray-500' : 'text-blue-700'; ?>">
+                            <?= $notification['time']; ?>
+                        </p>
+                    </div>
+                <?php endforeach; ?>
+            <?php endif; ?>
+        </div>
+        
+        <div class="p-3 border-t flex justify-end bg-gray-50">
+            <!-- Form สำหรับส่งค่า Mark All As Read -->
+            <form method="POST" action="add_publication.php" onsubmit="return confirm('คุณต้องการทำเครื่องหมายว่าอ่านแล้วทั้งหมดหรือไม่?');">
+                <input type="hidden" name="mark_read_all" value="1">
+                <button type="submit" 
+                        class="text-blue-600 hover:text-blue-800 text-sm font-medium py-2 px-3 rounded-lg hover:bg-blue-100 transition duration-150"
+                        <?= $unread_count === 0 ? 'disabled' : '' ?>>
+                    <i class="fas fa-check-double mr-1"></i> ทำเครื่องหมายว่าอ่านแล้วทั้งหมด
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+    const bellIcon = document.getElementById('notification-bell');
+    const modal = document.getElementById('notification-modal');
+    const closeModalBtn = document.getElementById('close-modal-btn');
+
+    // Function to open the modal
+    if (bellIcon) {
+        bellIcon.addEventListener('click', (e) => {
+            e.preventDefault(); // Prevent default link behavior
+            modal.classList.remove('hidden');
+        });
+    }
+
+
+    // Function to close the modal using the 'x' button
+    if (closeModalBtn) {
+        closeModalBtn.addEventListener('click', () => {
+            modal.classList.add('hidden');
+        });
+    }
+
+
+    // Function to close the modal when clicking outside of it
+    if (modal) {
+        modal.addEventListener('click', (e) => {
+            // Check if the click occurred directly on the modal backdrop (not on the modal content)
+            if (e.target === modal) {
+                modal.classList.add('hidden');
+            }
+        });
+    }
+
+
+    // Function to close the modal when pressing the ESC key
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && modal && !modal.classList.contains('hidden')) {
+            modal.classList.add('hidden');
+        }
+    });
+</script>
 
 </body>
 </html>

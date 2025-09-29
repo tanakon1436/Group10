@@ -1,11 +1,9 @@
 <?php
-// *************************************************************
-// ** DEBUGGING BLOCK: เปิดการแสดงข้อผิดพลาดของ PHP **
-// *************************************************************
+// === START: DEBUGGING AND ERROR REPORTING ===
 ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
-// *************************************************************
+// === END: DEBUGGING AND ERROR REPORTING ===
 
 session_start();
 
@@ -15,33 +13,30 @@ if (!isset($_SESSION['user_id'])) {
     exit;
 }
 
+// ** NEW: รับค่าการค้นหาและกรองปีจาก URL **
+$selected_year = isset($_GET['year']) && is_numeric($_GET['year']) ? (int)$_GET['year'] : null;
+$search_term = trim($_GET['search'] ?? '');
+
 // เชื่อมต่อฐานข้อมูล
 $servername = "localhost";
-$username = "root"; // ตรวจสอบชื่อผู้ใช้ฐานข้อมูล
-$password = "";    // ตรวจสอบรหัสผ่านฐานข้อมูล
-$dbname = "group10"; // ตรวจสอบชื่อฐานข้อมูล
+$username = "root";
+$password = "";
+$dbname = "group10";
 
 $conn = new mysqli($servername, $username, $password, $dbname);
 $db_error = null;
 if ($conn->connect_error) {
-    // บันทึกข้อผิดพลาดการเชื่อมต่อ
     $db_error = "Connection failed: " . $conn->connect_error;
 }
 
 // ดึงข้อมูลผู้ใช้จาก session
-$user_id = $_SESSION['user_id'];
+$user_id = $_SESSION['user_id']; // User_id ของอาจารย์ที่ล็อกอินอยู่
 $current_user_name = "ชื่อ ผู้ใช้งาน (ไม่พบข้อมูล)";
 $user_role = "";
 
-// *************************************************************
-// ** DOWNLOAD HANDLER ถูกลบออกไปแล้วตามคำขอ **
-// *************************************************************
-
-// *************************************************************
-// ** CONTINUING NORMAL PAGE DISPLAY LOGIC **
-// *************************************************************
-
-$publications = [];
+// --- กำหนดค่าเริ่มต้นสำหรับตัวแปรสถานะ ---
+$status_message = null; 
+$status_type = 'info'; 
 
 if (!$db_error) {
     // 1. ดึงข้อมูลชื่อและบทบาทของผู้ใช้
@@ -59,19 +54,136 @@ if (!$db_error) {
     } else {
          $db_error .= (empty($db_error) ? '' : ' | ') . "User Query prepare failed: " . $conn->error;
     }
+}
 
 
-    // *************************************************************
-    // ** 2. QUERY ข้อมูลผลงานตีพิมพ์: ดึง file_path **
-    // *************************************************************
+// *************************************************************
+// 2. การจัดการการแจ้งเตือน (Notifications) - ดึงข้อมูลจริงจาก DB
+// *************************************************************
+
+$notifications = [];
+$unread_count = 0;
+
+if (!$db_error) {
+    // ดึงข้อมูลการแจ้งเตือนที่ถูกส่งถึง User_id ที่ล็อกอินอยู่เท่านั้น
+    $sql_noti = "SELECT Noti_id, message, date_time, status FROM Notification WHERE User_id = ? ORDER BY date_time DESC";
+    $stmt_noti = $conn->prepare($sql_noti);
+
+    if ($stmt_noti) {
+        $stmt_noti->bind_param("i", $user_id);
+        $stmt_noti->execute();
+        $result_noti = $stmt_noti->get_result();
+
+        while ($row = $result_noti->fetch_assoc()) {
+            $is_read = ($row['status'] === 'read');
+            
+            // ตรวจสอบสถานะและนับ
+            if (!$is_read) {
+                $unread_count++;
+            }
+
+            // คำนวณเวลาที่ผ่านมา (อย่างง่าย)
+            $timestamp = strtotime($row['date_time']);
+            $time_diff = time() - $timestamp;
+
+            if ($time_diff < 60) {
+                $time_ago = $time_diff . ' วินาทีที่แล้ว';
+            } elseif ($time_diff < 3600) {
+                $time_ago = floor($time_diff / 60) . ' นาทีที่แล้ว';
+            } elseif ($time_diff < 86400) {
+                $time_ago = floor($time_diff / 3600) . ' ชั่วโมงที่แล้ว';
+            } else {
+                $time_ago = date('d/m/Y H:i', $timestamp);
+            }
+
+            $notifications[] = [
+                'id' => $row['Noti_id'],
+                'message' => htmlspecialchars($row['message']), 
+                'time' => $time_ago,
+                'is_read' => $is_read
+            ];
+        }
+        $stmt_noti->close();
+    } else {
+        $db_error .= (empty($db_error) ? '' : ' | ') . "Notification Query prepare failed: " . $conn->error;
+    }
+}
+
+
+// *************************************************************
+// 3. การจัดการ POST Request สำหรับ Mark All As Read
+// *************************************************************
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mark_read_all']) && !$db_error) {
+    $sql_update = "UPDATE Notification SET status = 'read' WHERE User_id = ? AND status = 'unread'";
+    $stmt_update = $conn->prepare($sql_update);
+    $stmt_update->bind_param("i", $user_id);
+
+    if ($stmt_update->execute()) {
+        $stmt_update->close();
+        // Redirect กลับไปที่หน้า publications.php
+        header("Location: publications.php?update_status=success_read");
+        exit();
+    } else {
+        $stmt_update->close();
+        $status_message = "❌ เกิดข้อผิดพลาดในการทำเครื่องหมายว่าอ่านแล้ว: " . $conn->error;
+        $status_type = 'error';
+    }
+}
+
+
+// *************************************************************
+// 4. ตรวจสอบสถานะหลังการ Redirect
+// *************************************************************
+if (isset($_GET['update_status']) && $_GET['update_status'] === 'success_read') {
+    $status_message = "✅ ทำเครื่องหมายการแจ้งเตือนทั้งหมดว่าอ่านแล้วเรียบร้อย";
+    $status_type = 'success';
+    // ล้างพารามิเตอร์ GET ออกจาก URL หลังจาก 3 วินาที (ป้องกัน Form Resubmission)
+    // หมายเหตุ: การใช้ header("Refresh:...") อาจไม่ทำงานในทุกสภาพแวดล้อม แต่เป็นวิธีแก้ปัญหาที่พบบ่อย
+    // ในการใช้งานจริงควรใช้ JavaScript ในการล้าง URL 
+    // สำหรับโค้ดนี้ จะขอแสดงผลข้อความตามปกติ
+    // $redirect_url = strtok($_SERVER["REQUEST_URI"], '?');
+    // header("Refresh: 3; URL=$redirect_url"); 
+}
+
+
+// *************************************************************
+// 5. QUERY ข้อมูลผลงานตีพิมพ์ และ Filter/Search
+// *************************************************************
+
+$publications = [];
+$where_clauses = ["Author_id = ?"];
+$params = [$user_id];
+$bind_types = "i"; // Initial binding type for User_id
+
+// 5A. เพิ่มเงื่อนไขการค้นหาถ้ามี
+if (!empty($search_term)) {
+    // Search in title OR journal
+    $where_clauses[] = "(title LIKE ? OR journal LIKE ?)";
+    $like_term = "%{$search_term}%";
+    array_push($params, $like_term, $like_term);
+    $bind_types .= "ss";
+}
+
+// 5B. เพิ่มเงื่อนไขการกรองตามปีถ้ามี
+if ($selected_year) {
+    $where_clauses[] = "publish_year = ?";
+    $params[] = $selected_year;
+    $bind_types .= "i";
+}
+
+if (!$db_error) {
     $pub_sql = "SELECT Pub_id, title, journal, publish_year, status, file_path 
                 FROM Publication 
-                WHERE Author_id = ?  
+                WHERE " . implode(" AND ", $where_clauses) . " 
                 ORDER BY publish_year DESC";
     
     $pub_stmt = $conn->prepare($pub_sql);
     if ($pub_stmt) {
-        $pub_stmt->bind_param("i", $user_id);
+        // ใช้ call_user_func_array เพื่อ bind_param ด้วยอาร์เรย์ของพารามิเตอร์
+        // ต้องส่ง types เป็นพารามิเตอร์แรก และพารามิเตอร์ที่เหลือคือค่าที่ต้องการ bind
+        $bind_params = array_merge([$bind_types], $params);
+        call_user_func_array([$pub_stmt, 'bind_param'], refValues($bind_params));
+
         $pub_stmt->execute();
         $pub_result = $pub_stmt->get_result();
         
@@ -83,47 +195,57 @@ if (!$db_error) {
         $db_error .= (empty($db_error) ? '' : ' | ') . "Publication Query prepare failed: " . $conn->error;
     }
 }
+// Helper function for call_user_func_array with references
+function refValues($arr){
+    if (strnatcmp(phpversion(),'5.3') >= 0) // PHP >= 5.3
+    {
+        $refs = array();
+        foreach($arr as $key => $value)
+            $refs[$key] = &$arr[$key];
+        return $refs;
+    }
+    return $arr;
+}
 
-// *** ข้อมูลการแจ้งเตือน (Notifications) ยังคงจำลอง ***
-$notifications = [
-    [
-        'sender' => 'Tarathep Madmun (Admin)',
-        'message' => 'ผลงานตีพิมพ์ "การวิจัยปัจจัย..." ได้รับการตรวจสอบและอนุมัติแล้ว',
-        'time' => '10 นาทีที่แล้ว',
-        'is_read' => false
-    ],
-    [
-        'sender' => 'ฝ่ายธุรการ',
-        'message' => 'กรุณาอัปเดตข้อมูลส่วนตัวในระบบภายในสัปดาห์นี้',
-        'time' => '1 ชั่วโมงที่แล้ว',
-        'is_read' => false
-    ],
-];
-$unread_count = count(array_filter($notifications, fn($n) => !$n['is_read']));
+// 5C. ดึงรายการปีที่มีผลงานทั้งหมดสำหรับ Dropdown Filter
+$available_years = [];
+if (!$db_error) {
+    $year_sql = "SELECT DISTINCT publish_year FROM Publication WHERE Author_id = ? AND publish_year IS NOT NULL ORDER BY publish_year DESC";
+    $year_stmt = $conn->prepare($year_sql);
+    if ($year_stmt) {
+        $year_stmt->bind_param("i", $user_id);
+        $year_stmt->execute();
+        $year_result = $year_stmt->get_result();
+        
+        while ($row = $year_result->fetch_assoc()) {
+            $available_years[] = (int)$row['publish_year'];
+        }
+        $year_stmt->close();
+    }
+}
+
 
 // ฟังก์ชันสำหรับกำหนดสีของสถานะ
 function getStatusBadge(string $status): string {
+    $status = strtolower($status);
+    
     switch ($status) {
-        case 'Approved':
         case 'approved': 
             $class = 'bg-green-100 text-green-700 border-green-300';
             $icon = 'fas fa-check-circle';
             $thaiStatus = 'อนุมัติแล้ว';
             break;
-        case 'Pending':
-        case 'Waiting': 
+        case 'pending':
         case 'waiting': 
             $class = 'bg-yellow-100 text-yellow-700 border-yellow-300 animate-pulse';
             $icon = 'fas fa-clock';
             $thaiStatus = 'รอการอนุมัติ';
             break;
-        case 'Rejected':
         case 'rejected':
             $class = 'bg-red-100 text-red-700 border-red-300';
             $icon = 'fas fa-times-circle';
             $thaiStatus = 'ถูกปฏิเสธ';
             break;
-        case 'Revision':
         case 'revision':
             $class = 'bg-orange-100 text-orange-700 border-orange-300';
             $icon = 'fas fa-pen-square';
@@ -179,13 +301,15 @@ function getStatusBadge(string $status): string {
         background-color: #dbeafe !important; /* bg-blue-100 */
         font-weight: 600;
       }
+      /* Status Message Styling */
+      .status-success { background-color: #d1fae5; color: #065f46; border-color: #34d399; }
+      .status-error { background-color: #fee2e2; color: #991b1b; border-color: #f87171; }
   </style>
 </head>
 <body class="flex min-h-screen font-sans bg-gray-100">
 
 <aside class="w-64 bg-white shadow-lg p-6 flex flex-col sticky top-0 h-screen">
     <div class="flex flex-col items-center border-b pb-4 mb-4">
-        <!-- ต้องแน่ใจว่า path ของรูปภาพถูกต้อง -->
         <img src="./img/img_psu.png" alt="PSU Logo" class="psu-logo"> 
         <span class="text-xs font-semibold text-gray-600">ระบบจัดการการตีพิมพ์</span>
     </div>
@@ -203,7 +327,7 @@ function getStatusBadge(string $status): string {
         <a href="Home-PR.php" class="flex items-center p-3 rounded-lg mb-3 text-gray-700 hover:bg-blue-100 hover:text-blue-700 transition-colors duration-150">
             <i class="fas fa-home w-5 h-5 mr-3"></i> หน้าหลัก
         </a>
-        <a href="publications.php" class="flex items-center p-3 rounded-lg mb-3 menu-active transition-colors duration-150">
+        <a href="publications.php" class="flex items-center p-3 rounded-lg mb-3 text-theme bg-blue-100 hover:bg-blue-200 hover:text-blue-900 font-semibold transition-colors duration-150 menu-active">
             <i class="fas fa-list-alt w-5 h-5 mr-3"></i> รายการผลงานตีพิมพ์
         </a>
         <a href="add_publication.php" class="flex items-center p-3 rounded-lg mb-3 text-gray-700 hover:bg-blue-100 hover:text-blue-700 transition-colors duration-150">
@@ -248,27 +372,72 @@ function getStatusBadge(string $status): string {
         </div>
     </header>
 
+    <?php if ($status_message): ?>
+        <div class="mb-6 p-4 rounded-lg shadow-md font-medium border-l-4 
+            <?= $status_type === 'success' ? 'status-success border-green-500' : 'status-error border-red-500' ?>">
+            <?= $status_message; ?>
+        </div>
+    <?php endif; ?>
+
     <div class="bg-white p-6 rounded-xl shadow-2xl">
-        <h2 class="text-2xl font-bold text-gray-800 mb-6 pb-2 border-b-2 border-blue-200">ผลงานตีพิมพ์ทั้งหมดของท่าน (<?= count($publications); ?> รายการ)</h2>
+        
+        <!-- ** ส่วนที่ปรับปรุง: เพิ่มฟิลเตอร์ตามปีและค้นหา ** -->
+        <div class="flex flex-col gap-4 md:flex-row md:justify-between items-start md:items-center mb-6 pb-2 border-b-2 border-blue-200">
+            <h2 class="text-2xl font-bold text-gray-800 mb-2 md:mb-0">
+                ผลงานตีพิมพ์ทั้งหมด (<?= count($publications); ?> รายการ)
+            </h2>
+            
+            <form id="filter-form" action="publications.php" method="GET" class="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
+                <!-- Search Input -->
+                <div class="relative w-full sm:w-64">
+                    <input type="text" 
+                           name="search"
+                           id="search-input"
+                           value="<?= htmlspecialchars($search_term); ?>"
+                           placeholder="ค้นหาชื่อผลงาน/วารสาร..."
+                           class="w-full pl-10 pr-4 py-2 text-base border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 transition duration-150 ease-in-out">
+                    <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
+                </div>
+                
+                <!-- Year Filter Dropdown -->
+                <div class="relative inline-block w-full sm:w-auto">
+                    <label for="year-filter" class="sr-only">กรองตามปี</label>
+                    <select id="year-filter" name="year"
+                            class="form-select block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 rounded-md shadow-sm transition duration-150 ease-in-out">
+                        
+                        <option value="" <?= $selected_year === null ? 'selected' : '' ?>>-- กรองตามปีทั้งหมด --</option>
+                        
+                        <?php foreach ($available_years as $year): ?>
+                            <option value="<?= $year; ?>" <?= $selected_year === $year ? 'selected' : '' ?>>
+                                ปี <?= $year; ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                
+                <!-- Hidden button to trigger form submission on change/enter -->
+                <button type="submit" class="hidden"></button>
+            </form>
+        </div>
+        <!-- ** สิ้นสุดส่วนที่ปรับปรุง ** -->
 
         <?php if ($db_error): ?>
             <div class="p-4 bg-red-100 text-red-700 border border-red-300 rounded-lg shadow-md mb-4">
                 <p>⚠️ **ข้อผิดพลาดฐานข้อมูล:** ไม่สามารถดึงข้อมูลผลงานได้:</p>
                 <p class="font-mono text-sm mt-1 break-words"><?= htmlspecialchars($db_error); ?></p>
-                <p class="text-sm mt-2 font-semibold">
-                    วิธีแก้ไขเบื้องต้น:
-                    <ol class="list-decimal list-inside ml-2 mt-1 font-normal">
-                        <li>ตรวจสอบค่าตัวแปร `$servername`, `$username`, `$password`, `$dbname` ในโค้ดว่าตรงกับข้อมูล MySQL/MariaDB ของคุณหรือไม่ (โดยเฉพาะรหัสผ่าน)</li>
-                        <li>ตรวจสอบว่าตาราง `User` และ `Publication` มีอยู่จริงในฐานข้อมูล `group10`</li>
-                    </ol>
-                </p>
             </div>
         <?php endif; ?>
 
-        <?php if (empty($publications)): ?>
+        <?php if (empty($publications) && !$db_error): ?>
             <div class="text-center py-10 border-4 border-dashed border-gray-200 rounded-xl bg-gray-50">
                 <i class="fas fa-exclamation-circle text-4xl text-gray-400 mb-3"></i>
-                <p class="text-lg text-gray-600 font-semibold">ไม่พบผลงานตีพิมพ์ในระบบ</p>
+                <p class="text-lg text-gray-600 font-semibold">
+                    <?php if (!empty($search_term) || $selected_year): ?>
+                        ไม่พบผลงานตีพิมพ์ที่ตรงกับเงื่อนไขการค้นหา/กรอง
+                    <?php else: ?>
+                        ไม่พบผลงานตีพิมพ์ในระบบ
+                    <?php endif; ?>
+                </p>
                 <a href="add_publication.php" class="mt-4 inline-block bg-blue-600 text-white px-5 py-2 rounded-lg hover:bg-blue-700 transition-colors">
                     <i class="fas fa-plus-circle mr-2"></i> เพิ่มผลงานตีพิมพ์ใหม่
                 </a>
@@ -278,15 +447,17 @@ function getStatusBadge(string $status): string {
                 <?php foreach ($publications as $pub): 
                     $file_path = htmlspecialchars($pub['file_path'] ?? '');
                     // ตรวจสอบว่ามีไฟล์หรือไม่
-                    $has_file = !empty($file_path) && file_exists($file_path);
+                    // NOTE: ในสภาพแวดล้อมจำลอง file_exists อาจทำงานไม่ได้ หาก path ไม่ตรง
+                    $has_file = !empty($file_path); 
                 ?>
                     <div class="flex flex-col md:flex-row justify-between items-start md:items-center p-5 rounded-xl border-l-4 
                         <?php 
                             // กำหนดสีของเส้นขอบตามสถานะ
-                            if (in_array($pub['status'], ['Approved', 'approved'])) echo 'border-green-500 bg-green-50/70';
-                            else if (in_array($pub['status'], ['Pending', 'Waiting', 'waiting'])) echo 'border-yellow-500 bg-yellow-50/70';
-                            else if (in_array($pub['status'], ['Rejected', 'rejected'])) echo 'border-red-500 bg-red-50/70';
-                            else if (in_array($pub['status'], ['Revision', 'revision'])) echo 'border-orange-500 bg-orange-50/70';
+                            $status_lower = strtolower($pub['status']);
+                            if (in_array($status_lower, ['approved'])) echo 'border-green-500 bg-green-50/70';
+                            else if (in_array($status_lower, ['pending', 'waiting'])) echo 'border-yellow-500 bg-yellow-50/70';
+                            else if (in_array($status_lower, ['rejected'])) echo 'border-red-500 bg-red-50/70';
+                            else if (in_array($status_lower, ['revision'])) echo 'border-orange-500 bg-orange-50/70';
                             else echo 'border-gray-300 bg-gray-50';
                         ?>
                         shadow-md hover:shadow-lg transition-shadow duration-300">
@@ -300,7 +471,6 @@ function getStatusBadge(string $status): string {
                             <div class="text-gray-600 text-sm mt-1 space-y-1">
                                 <p><i class="fas fa-book-open mr-2 text-blue-400"></i> **วารสาร/ประชุม:** <?= htmlspecialchars($pub['journal'] ?? 'ไม่ระบุ'); ?></p>
                                 
-                                <!-- ปรับการแสดงผลสำหรับคอลัมน์ YEAR -->
                                 <p><i class="fas fa-calendar-alt mr-2 text-blue-400"></i> **ปีที่ตีพิมพ์:** <?= htmlspecialchars($pub['publish_year'] ?? 'N/A'); ?>
                                 </p>
                                 
@@ -347,7 +517,7 @@ function getStatusBadge(string $status): string {
 </main>
 </div>
 
-<!-- Notification Modal Structure (คัดลอกมาจาก Home-PR.php) -->
+<!-- Notification Modal -->
 <div id="notification-modal" class="fixed inset-0 bg-gray-900 bg-opacity-50 hidden z-50 flex items-center justify-center">
     <div class="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4 overflow-hidden transform transition-all">
         <div class="flex justify-between items-center p-5 border-b bg-blue-50">
@@ -361,37 +531,107 @@ function getStatusBadge(string $status): string {
 
         <div class="p-4 max-h-96 overflow-y-auto space-y-3">
             <?php if (empty($notifications)): ?>
-                <p class="text-gray-500 text-center py-4">ไม่มีข้อความแจ้งเตือนใหม่</p>
+                <p class="text-gray-500 text-center py-4">ไม่มีข้อความแจ้งเตือน</p>
             <?php else: ?>
                 <?php foreach ($notifications as $notification): ?>
-                    <div class="p-3 rounded-lg <?= $notification['is_read'] ? 'bg-gray-50 text-gray-700' : 'bg-blue-100 border border-blue-200 font-semibold shadow-sm'; ?>">
-                        <p class="text-sm">
+                    <div class="p-3 rounded-lg border 
+                        <?= $notification['is_read'] ? 'bg-gray-50 border-gray-200 text-gray-700' : 'bg-blue-100 border-blue-300 font-semibold shadow-sm'; ?>">
+                        <p class="text-sm flex items-center">
                             <i class="<?= $notification['is_read'] ? 'far fa-envelope-open text-gray-500' : 'fas fa-envelope text-blue-600'; ?> mr-2"></i>
-                            **<?= htmlspecialchars($notification['sender']); ?>** ส่งข้อความ:
+                            <span class="font-bold">ข้อความ:</span>
                         </p>
-                        <p class="mt-1 ml-5 text-base leading-snug"><?= htmlspecialchars($notification['message']); ?></p>
-                        <p class="text-xs text-right mt-1 <?= $notification['is_read'] ? 'text-gray-500' : 'text-blue-600'; ?>">
-                            <?= htmlspecialchars($notification['time']); ?>
+                        <p class="mt-1 ml-5 text-base leading-snug break-words"><?= $notification['message']; ?></p> 
+                        <p class="text-xs text-right mt-1 <?= $notification['is_read'] ? 'text-gray-500' : 'text-blue-700'; ?>">
+                            <?= $notification['time']; ?>
                         </p>
                     </div>
                 <?php endforeach; ?>
             <?php endif; ?>
         </div>
         
-        <div class="p-3 border-t flex justify-end">
-            <button class="text-blue-600 hover:text-blue-800 text-sm font-medium">ทำเครื่องหมายว่าอ่านแล้วทั้งหมด</button>
+        <div class="p-3 border-t flex justify-end bg-gray-50">
+            <!-- Form สำหรับส่งค่า Mark All As Read -->
+            <form method="POST" action="publications.php" onsubmit="return confirm('คุณต้องการทำเครื่องหมายว่าอ่านแล้วทั้งหมดหรือไม่?');">
+                <input type="hidden" name="mark_read_all" value="1">
+                <button type="submit" 
+                        class="text-blue-600 hover:text-blue-800 text-sm font-medium py-2 px-3 rounded-lg hover:bg-blue-100 transition duration-150"
+                        <?= $unread_count === 0 ? 'disabled' : '' ?>>
+                    <i class="fas fa-check-double mr-1"></i> ทำเครื่องหมายว่าอ่านแล้วทั้งหมด
+                </button>
+            </form>
         </div>
     </div>
 </div>
 
 <script>
+    // ************************************************
+    // JavaScript สำหรับการเปลี่ยนหน้าเมื่อเลือกปี หรือกดค้นหา
+    // ************************************************
+    document.addEventListener('DOMContentLoaded', function() {
+        const yearFilter = document.getElementById('year-filter');
+        const searchInput = document.getElementById('search-input');
+        const filterForm = document.getElementById('filter-form');
+
+        // ฟังก์ชันสำหรับอัปเดต URL เมื่อมีการเปลี่ยนค่าในฟิลเตอร์หรือค้นหา
+        function updateFilterAndSearch() {
+            const currentSearch = searchInput.value.trim();
+            const currentYear = yearFilter.value;
+            
+            let url = 'publications.php?';
+            const params = [];
+
+            if (currentSearch) {
+                params.push('search=' + encodeURIComponent(currentSearch));
+            }
+
+            if (currentYear) {
+                params.push('year=' + encodeURIComponent(currentYear));
+            }
+
+            // ถ้ามีพารามิเตอร์ ให้สร้าง URL
+            if (params.length > 0) {
+                url += params.join('&');
+            } else {
+                url = 'publications.php';
+            }
+
+            window.location.href = url;
+        }
+
+        // 1. เมื่อมีการเปลี่ยนค่าใน Dropdown ปี
+        if (yearFilter) {
+            yearFilter.addEventListener('change', function() {
+                updateFilterAndSearch();
+            });
+        }
+
+        // 2. เมื่อมีการกด Enter ในช่องค้นหา
+        if (searchInput) {
+            searchInput.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault(); // ป้องกันการ submit แบบปกติ
+                    updateFilterAndSearch();
+                }
+            });
+        }
+        
+        // 3. เมื่อกดปุ่ม submit (แม้จะถูกซ่อนไว้ก็ตาม หรือถ้ามีการเพิ่มปุ่มค้นหาในอนาคต)
+        filterForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            updateFilterAndSearch();
+        });
+    });
+
+    // ************************************************
+    // JavaScript สำหรับ Modal การแจ้งเตือน
+    // ************************************************
     const bellIcon = document.getElementById('notification-bell');
     const modal = document.getElementById('notification-modal');
     const closeModalBtn = document.getElementById('close-modal-btn');
 
     // Function to open the modal
     bellIcon.addEventListener('click', (e) => {
-        e.preventDefault(); // Prevent default link behavior
+        e.preventDefault(); 
         modal.classList.remove('hidden');
     });
 
@@ -402,7 +642,6 @@ function getStatusBadge(string $status): string {
 
     // Function to close the modal when clicking outside of it
     modal.addEventListener('click', (e) => {
-        // Check if the click occurred directly on the modal backdrop (not on the modal content)
         if (e.target === modal) {
             modal.classList.add('hidden');
         }
@@ -419,8 +658,7 @@ function getStatusBadge(string $status): string {
 </body>
 </html>
 <?php
-// ปิดการเชื่อมต่อฐานข้อมูลเมื่อเสร็จสิ้น
-if (!$db_error && isset($conn) && $conn->ping()) {
+if (!$db_error) {
     $conn->close();
 }
 ?>

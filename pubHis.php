@@ -36,29 +36,93 @@ $user = $result->fetch_assoc();
 $current_user_name = htmlspecialchars($user['first_name'] . " " . $user['last_name']);
 $stmt->close();
 
-// *************************************************************
-// 1. การดึงข้อมูลการแจ้งเตือน (Notifications) - ใช้ข้อมูลจำลองชั่วคราว
-// *************************************************************
-// หมายเหตุ: ควรกำหนดการดึงข้อมูล Notification จริงเหมือนที่ทำใน Home-PR.php 
-// แต่เพื่อให้สอดคล้องกับโค้ดต้นฉบับ จะใช้ข้อมูลจำลองเพื่อนับจำนวนที่ยังไม่ได้อ่าน
-$notifications = [
-    // ข้อมูลการแจ้งเตือนจำลอง...
-];
-$unread_count = 0; // ตั้งค่าเป็น 0 เพื่อความง่ายในการดีบักหน้าประวัติ
+// --- กำหนดค่าเริ่มต้นสำหรับตัวแปรสถานะ ---
+$status_message = null; 
+$status_type = 'info'; 
 
 // *************************************************************
-// 2. การดึงข้อมูลประวัติการแก้ไข (Publication History Data Fetch)
+// 1. การจัดการการแจ้งเตือน (Notifications) - [นำมาจากไฟล์แรก]
 // *************************************************************
 
-// **ตารางที่จำเป็น:** // 1. PublicationHistory (History_id, Pub_id, Edited_by, change_detail, edit_date)
-// 2. Publication (Pub_id, title) -- สมมติว่ามีตาราง Publication ที่มีฟิลด์ title
-// 3. User (User_id)
-// เงื่อนไข: ดึงเฉพาะประวัติที่อาจารย์ท่านนี้เป็นผู้แก้ไข (Edited_by = $user_id)
+// 1.1 ดึงข้อมูลการแจ้งเตือนจริงจากฐานข้อมูล
+$notifications = [];
+$unread_count = 0;
 
+// ดึงข้อมูลการแจ้งเตือนที่ถูกส่งถึง User_id ที่ล็อกอินอยู่เท่านั้น
+$sql_noti = "SELECT Noti_id, message, date_time, status FROM Notification WHERE User_id = ? ORDER BY date_time DESC";
+$stmt_noti = $conn->prepare($sql_noti);
+$stmt_noti->bind_param("i", $user_id);
+$stmt_noti->execute();
+$result_noti = $stmt_noti->get_result();
+
+while ($row = $result_noti->fetch_assoc()) {
+    $is_read = ($row['status'] === 'read');
+    
+    // ตรวจสอบสถานะและนับ
+    if (!$is_read) {
+        $unread_count++;
+    }
+
+    // คำนวณเวลาที่ผ่านมา (อย่างง่าย)
+    $timestamp = strtotime($row['date_time']);
+    $time_diff = time() - $timestamp;
+
+    if ($time_diff < 60) {
+        $time_ago = $time_diff . ' วินาทีที่แล้ว';
+    } elseif ($time_diff < 3600) {
+        $time_ago = floor($time_diff / 60) . ' นาทีที่แล้ว';
+    } elseif ($time_diff < 86400) {
+        $time_ago = floor($time_diff / 3600) . ' ชั่วโมงที่แล้ว';
+    } else {
+        $time_ago = date('d/m/Y H:i', $timestamp);
+    }
+
+    $notifications[] = [
+        'id' => $row['Noti_id'],
+        'message' => htmlspecialchars($row['message']), 
+        'time' => $time_ago,
+        'is_read' => $is_read
+    ];
+}
+$stmt_noti->close();
+
+// *************************************************************
+// 2. การจัดการ POST Request สำหรับ Mark All As Read - [นำมาจากไฟล์แรก]
+// *************************************************************
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mark_read_all'])) {
+    // อัปเดตสถานะการแจ้งเตือนทั้งหมดที่ยังไม่ได้อ่านให้เป็น 'read'
+    $sql_update = "UPDATE Notification SET status = 'read' WHERE User_id = ? AND status = 'unread'";
+    $stmt_update = $conn->prepare($sql_update);
+    $stmt_update->bind_param("i", $user_id);
+
+    if ($stmt_update->execute()) {
+        $stmt_update->close();
+        // Redirect เพื่อป้องกัน Form Resubmission และแสดงข้อความสถานะ
+        header("Location: pubHis.php?update_status=success_read");
+        exit();
+    } else {
+        $stmt_update->close();
+        $status_message = "❌ เกิดข้อผิดพลาดในการทำเครื่องหมายว่าอ่านแล้ว: " . $conn->error;
+        $status_type = 'error';
+    }
+}
+
+// *************************************************************
+// 3. ตรวจสอบสถานะหลังการ Redirect - [นำมาจากไฟล์แรก]
+// *************************************************************
+if (isset($_GET['update_status']) && $_GET['update_status'] === 'success_read') {
+    $status_message = "✅ ทำเครื่องหมายการแจ้งเตือนทั้งหมดว่าอ่านแล้วเรียบร้อย";
+    // ล้างพารามิเตอร์ GET ออกจาก URL
+    $redirect_url = strtok($_SERVER["REQUEST_URI"], '?');
+    header("Refresh: 3; URL=$redirect_url"); // รีเฟรชหลังจาก 3 วินาที
+    $status_type = 'success';
+}
+
+// *************************************************************
+// LOGIC 3: การดึงข้อมูลประวัติการแก้ไข (Publication History Data Fetch) - [โค้ดเดิมของไฟล์นี้]
+// *************************************************************
 $history_records = [];
 
-// คำสั่ง SQL ที่ JOIN ตาราง PublicationHistory กับ Publication และกรองด้วย User_id ที่ล็อกอิน
-// **สมมติว่ามีตาราง Publication (ซึ่งจำเป็นต้องมีเพื่อให้ JOIN ได้)**
 $history_query = "
     SELECT 
         ph.change_detail, 
@@ -74,19 +138,16 @@ $history_query = "
         ph.edit_date DESC
 ";
 
-// เตรียมและประมวลผลคำสั่ง SQL
 if ($stmt_history = $conn->prepare($history_query)) {
     $stmt_history->bind_param("i", $user_id);
     $stmt_history->execute();
     $history_result = $stmt_history->get_result();
     
-    // ดึงข้อมูลทั้งหมด
     while ($row = $history_result->fetch_assoc()) {
-        // กำหนด action_type อย่างง่ายจาก change_detail เพื่อให้แสดงผลสวยงาม
         $action_type = 'แก้ไขข้อมูล';
-        if (strpos($row['change_detail'], 'Added new publication') !== false) {
+        if (strpos($row['change_detail'], 'Added new publication') !== false || strpos($row['change_detail'], 'สร้างผลงานใหม่') !== false) {
             $action_type = 'สร้างผลงานใหม่';
-        } elseif (strpos($row['change_detail'], 'Deleted publication') !== false) {
+        } elseif (strpos($row['change_detail'], 'Deleted publication') !== false || strpos($row['change_detail'], 'ลบข้อมูล') !== false) {
              $action_type = 'ลบข้อมูล';
         }
         
@@ -99,18 +160,25 @@ if ($stmt_history = $conn->prepare($history_query)) {
     }
     $stmt_history->close();
 } else {
-    // แสดงข้อความ error หากมีปัญหาในการเตรียมคำสั่ง SQL
-    // ในกรณีที่คุณยังไม่ได้สร้างตาราง Publication อาจเกิด error ที่นี่
     echo "<script>console.error('SQL Prepare Error: " . $conn->error . "');</script>";
 }
 
 // ฟังก์ชันสำหรับแปลงวันที่ให้อ่านง่าย
 function formatThaiDate($timestamp) {
-    // ตรวจสอบว่าเป็นวันที่ที่ถูกต้องหรือไม่
     if (!$timestamp || strtotime($timestamp) === false) {
         return 'ไม่ระบุวันที่';
     }
-    return date('d/m/Y H:i', strtotime($timestamp));
+    $time_diff = time() - strtotime($timestamp);
+
+    if ($time_diff < 60) {
+        return $time_diff . ' วินาทีที่แล้ว';
+    } elseif ($time_diff < 3600) {
+        return floor($time_diff / 60) . ' นาทีที่แล้ว';
+    } elseif ($time_diff < 86400) {
+        return floor($time_diff / 3600) . ' ชั่วโมงที่แล้ว';
+    } else {
+        return date('d/m/Y H:i', strtotime($timestamp));
+    }
 }
 
 // ฟังก์ชันสำหรับกำหนดสีตามประเภทการดำเนินการ
@@ -171,13 +239,16 @@ function getActionBadge($action_type) {
           transform: translateY(-2px);
           box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
       }
+      /* Status Message Styling */
+      .status-success { background-color: #d1fae5; color: #065f46; border-color: #34d399; }
+      .status-error { background-color: #fee2e2; color: #991b1b; border-color: #f87171; }
   </style>
 </head>
 <body class="flex min-h-screen font-sans bg-gray-100">
 
 <aside class="w-64 bg-white shadow-lg p-6 flex flex-col sticky top-0 h-screen">
     <div class="flex flex-col items-center border-b pb-4 mb-4">
-        <img src="./img/img_psu.png" alt="PSU Logo" class="psu-logo">
+        <img src="./img/img_psu.png" alt="PSU Logo" class="psu-logo"> 
         <span class="text-xs font-semibold text-gray-600">ระบบจัดการการตีพิมพ์</span>
     </div>
 
@@ -200,7 +271,6 @@ function getActionBadge($action_type) {
         <a href="add_publication.php" class="flex items-center p-3 rounded-lg mb-3 text-gray-700 hover:bg-blue-100 hover:text-blue-700 transition-colors duration-150">
             <i class="fas fa-plus-circle w-5 h-5 mr-3"></i> เพิ่มผลงานตีพิมพ์
         </a>
-        <!-- ลิงก์นี้คือหน้าปัจจุบัน และถูกตั้งค่าให้เป็น active -->
         <a href="pubHis.php" class="flex items-center p-3 rounded-lg mb-3 text-gray-700 hover:bg-blue-100 hover:text-blue-700 transition-colors duration-150 menu-active">
             <i class="fas fa-history w-5 h-5 mr-3"></i> ประวัติการแก้ไข
         </a>
@@ -238,6 +308,13 @@ function getActionBadge($action_type) {
         </div>
     </header>
 
+    <?php if ($status_message): ?>
+        <div class="mb-6 p-4 rounded-lg shadow-md font-medium border-l-4 
+            <?= $status_type === 'success' ? 'status-success border-green-500' : 'status-error border-red-500' ?>">
+            <?= $status_message; ?>
+        </div>
+    <?php endif; ?>
+
     <div class="bg-white rounded-xl shadow-2xl p-6 md:p-8">
         <h2 class="text-2xl font-semibold text-gray-700 mb-6 border-b pb-3">
             การดำเนินการทั้งหมดของ <?= $current_user_name; ?>
@@ -254,24 +331,20 @@ function getActionBadge($action_type) {
                     <div class="history-card p-4 border rounded-xl shadow-md transition-all duration-300 bg-white hover:bg-gray-50">
                         <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center">
                             
-                            <!-- วันที่และเวลา -->
                             <div class="text-sm font-medium text-gray-500 mb-2 sm:mb-0">
                                 <i class="far fa-clock mr-2 text-blue-500"></i>
                                 <?= formatThaiDate($record['timestamp']); ?>
                             </div>
 
-                            <!-- ประเภทการดำเนินการ (Badge) -->
                             <span class="px-3 py-1 text-xs font-semibold rounded-full border <?= getActionBadge($record['action_type']); ?>">
                                 <i class="fas fa-tag mr-1"></i> <?= htmlspecialchars($record['action_type']); ?>
                             </span>
                         </div>
 
-                        <!-- ชื่อผลงาน -->
                         <h3 class="text-lg font-bold text-gray-800 mt-2 mb-1">
                            <i class="fas fa-file-alt text-lg text-gray-600 mr-2"></i> <?= htmlspecialchars($record['title']); ?>
                         </h3>
 
-                        <!-- รายละเอียดการดำเนินการ -->
                         <p class="text-gray-600 text-sm pl-7">
                             **รายละเอียด:** <?= $record['description']; ?>
                         </p>
@@ -283,7 +356,6 @@ function getActionBadge($action_type) {
 </main>
 </div>
 
-<!-- Modal for Notifications -->
 <div id="notification-modal" class="fixed inset-0 bg-gray-900 bg-opacity-50 hidden z-50 flex items-center justify-center">
     <div class="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4 overflow-hidden transform transition-all">
         <div class="flex justify-between items-center p-5 border-b bg-blue-50">
@@ -297,26 +369,33 @@ function getActionBadge($action_type) {
 
         <div class="p-4 max-h-96 overflow-y-auto space-y-3">
             <?php if (empty($notifications)): ?>
-                <p class="text-gray-500 text-center py-4">ไม่มีข้อความแจ้งเตือนใหม่</p>
+                <p class="text-gray-500 text-center py-4">ไม่มีข้อความแจ้งเตือน</p>
             <?php else: ?>
                 <?php foreach ($notifications as $notification): ?>
-                    <div class="p-3 rounded-lg <?= $notification['is_read'] ? 'bg-gray-50 text-gray-700' : 'bg-blue-100 border border-blue-200 font-semibold shadow-sm'; ?>">
-                        <p class="text-sm">
+                    <div class="p-3 rounded-lg border 
+                        <?= $notification['is_read'] ? 'bg-gray-50 border-gray-200 text-gray-700' : 'bg-blue-100 border-blue-300 font-semibold shadow-sm'; ?>">
+                        <p class="text-sm flex items-center">
                             <i class="<?= $notification['is_read'] ? 'far fa-envelope-open text-gray-500' : 'fas fa-envelope text-blue-600'; ?> mr-2"></i>
-                            **<?= htmlspecialchars($notification['sender']); ?>** ส่งข้อความ:
+                            <span class="font-bold">ข้อความ:</span>
                         </p>
-                        <p class="mt-1 ml-5 text-base leading-snug"><?= htmlspecialchars($notification['message']); ?></p>
-                        <p class="text-xs text-right mt-1 <?= $notification['is_read'] ? 'text-gray-500' : 'text-blue-600'; ?>">
-                            <?= htmlspecialchars($notification['time']); ?>
+                        <p class="mt-1 ml-5 text-base leading-snug break-words"><?= $notification['message']; ?></p> 
+                        <p class="text-xs text-right mt-1 <?= $notification['is_read'] ? 'text-gray-500' : 'text-blue-700'; ?>">
+                            <?= $notification['time']; ?>
                         </p>
                     </div>
                 <?php endforeach; ?>
             <?php endif; ?>
         </div>
         
-        <div class="p-3 border-t flex justify-end">
-            <!-- เนื่องจากนี่คือหน้า history จึงไม่ได้ใส่ logic สำหรับ Mark All as Read ไว้ -->
-            <button class="text-blue-600 hover:text-blue-800 text-sm font-medium">ทำเครื่องหมายว่าอ่านแล้วทั้งหมด</button>
+        <div class="p-3 border-t flex justify-end bg-gray-50">
+            <form method="POST" action="pubHis.php" onsubmit="return confirm('คุณต้องการทำเครื่องหมายว่าอ่านแล้วทั้งหมดหรือไม่?');">
+                <input type="hidden" name="mark_read_all" value="1">
+                <button type="submit" 
+                        class="text-blue-600 hover:text-blue-800 text-sm font-medium py-2 px-3 rounded-lg hover:bg-blue-100 transition duration-150"
+                        <?= $unread_count === 0 ? 'disabled' : '' ?>>
+                    <i class="fas fa-check-double mr-1"></i> ทำเครื่องหมายว่าอ่านแล้วทั้งหมด
+                </button>
+            </form>
         </div>
     </div>
 </div>
@@ -326,26 +405,21 @@ function getActionBadge($action_type) {
     const modal = document.getElementById('notification-modal');
     const closeModalBtn = document.getElementById('close-modal-btn');
 
-    // Function to open the modal
     bellIcon.addEventListener('click', (e) => {
-        e.preventDefault(); // Prevent default link behavior
+        e.preventDefault(); 
         modal.classList.remove('hidden');
     });
 
-    // Function to close the modal using the 'x' button
     closeModalBtn.addEventListener('click', () => {
         modal.classList.add('hidden');
     });
 
-    // Function to close the modal when clicking outside of it
     modal.addEventListener('click', (e) => {
-        // Check if the click occurred directly on the modal backdrop (not on the modal content)
         if (e.target === modal) {
             modal.classList.add('hidden');
         }
     });
 
-    // Function to close the modal when pressing the ESC key
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && !modal.classList.contains('hidden')) {
             modal.classList.add('hidden');
