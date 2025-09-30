@@ -38,8 +38,8 @@ $user_role = $user['role'];
 $stmt->close();
 
 // --- กำหนดค่าเริ่มต้นสำหรับตัวแปรสถานะ ---
-$status_message = null; 
-$status_type = 'info'; 
+$status_message = null;
+$status_type = 'info';
 
 // *************************************************************
 // 1. การจัดการการแจ้งเตือน (Notifications)
@@ -58,7 +58,7 @@ $result_noti = $stmt_noti->get_result();
 
 while ($row = $result_noti->fetch_assoc()) {
     $is_read = ($row['status'] === 'read');
-    
+   
     // ตรวจสอบสถานะและนับ
     if (!$is_read) {
         $unread_count++;
@@ -81,7 +81,7 @@ while ($row = $result_noti->fetch_assoc()) {
     $notifications[] = [
         'id' => $row['Noti_id'], // ใช้ Noti_id ตามโครงสร้างตาราง
         // ข้อความจะถูกแสดงตามที่ Staff/Admin/System บันทึกไว้ในฟิลด์ message
-        'message' => htmlspecialchars($row['message']), 
+        'message' => htmlspecialchars($row['message']),
         'time' => $time_ago,
         'is_read' => $is_read
     ];
@@ -150,7 +150,7 @@ if (isset($_GET['update_status']) && $_GET['update_status'] === 'success_read') 
           background-color: #dbeafe; /* blue-100 */
       }
       .psu-logo {
-          height: 100px; 
+          height: 100px;
           object-fit: contain;
       }
       /* Custom style for active menu in this page */
@@ -191,8 +191,12 @@ if (isset($_GET['update_status']) && $_GET['update_status'] === 'success_read') 
         <a href="add_publication.php" class="flex items-center p-3 rounded-lg mb-3 text-gray-700 hover:bg-blue-100 hover:text-blue-700 transition-colors duration-150">
             <i class="fas fa-plus-circle w-5 h-5 mr-3"></i> เพิ่มผลงานตีพิมพ์
         </a>
-        <a href="pubHis.php" class="flex items-center p-3 rounded-lg text-gray-700 hover:bg-blue-100 hover:text-blue-700 transition-colors duration-150">
+        <a href="pubHis.php" class="flex items-center p-3 rounded-lg mb-3 text-gray-700 hover:bg-blue-100 hover:text-blue-700 transition-colors duration-150">
             <i class="fas fa-history w-5 h-5 mr-3"></i> ประวัติการแก้ไข
+        </a>
+        
+        <a href="publication_report.php" class="flex items-center p-3 rounded-lg mb-3 text-gray-700 hover:bg-blue-100 hover:text-blue-700 transition-colors duration-150">
+            <i class="fas fa-chart-bar w-5 h-5 mr-3"></i> จัดทำรายงานตีพิมพ์
         </a>
         <a href="usermannual.php" class="flex items-center p-3 rounded-lg text-gray-700 hover:bg-blue-100 hover:text-blue-700 transition-colors duration-150">
             <i class="fas fa-book w-5 h-5 mr-3"></i> คู่มือการใช้งาน
@@ -209,7 +213,7 @@ if (isset($_GET['update_status']) && $_GET['update_status'] === 'success_read') 
 <main class="flex-1 p-8">
     <header class="flex items-center justify-between mb-8 pb-4 border-b border-gray-300">
         <h1 class="text-3xl font-bold text-gray-800">ระบบ จัดการการตีพิมพ์ผลงานของอาจารย์</h1>
-        
+       
         <div class="flex items-center space-x-4 right-icons">
             <a href="#" id="notification-bell" title="แจ้งเตือน" class="relative">
                 <i class="fas fa-bell text-2xl"></i>
@@ -229,7 +233,7 @@ if (isset($_GET['update_status']) && $_GET['update_status'] === 'success_read') 
     </header>
 
     <?php if ($status_message): ?>
-        <div class="mb-6 p-4 rounded-lg shadow-md font-medium border-l-4 
+        <div class="mb-6 p-4 rounded-lg shadow-md font-medium border-l-4
             <?= $status_type === 'success' ? 'status-success border-green-500' : 'status-error border-red-500' ?>">
             <?= $status_message; ?>
         </div>
@@ -237,7 +241,8 @@ if (isset($_GET['update_status']) && $_GET['update_status'] === 'success_read') 
 
     <div class="flex flex-col items-center justify-center p-10 bg-white rounded-xl shadow-2xl min-h-[400px]">
         <h2 class="text-2xl font-semibold text-gray-700 mb-8">เมนูการจัดการผลงานตีพิมพ์</h2>
-        <div class="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-6">
+        
+        <div class="flex flex-wrap items-center justify-center gap-6">
             <a href="publications.php" class="block">
                 <button class="bg-blue-600 text-white px-8 py-4 rounded-xl shadow-lg hover:bg-blue-700 transition-colors duration-200 text-lg font-medium w-full sm:w-64 flex items-center justify-center">
                     <i class="fas fa-list-alt mr-3"></i> รายการผลงานตีพิมพ์
@@ -248,12 +253,16 @@ if (isset($_GET['update_status']) && $_GET['update_status'] === 'success_read') 
                     <i class="fas fa-plus-circle mr-3"></i> เพิ่มผลงานตีพิมพ์
                 </button>
             </a>
+            <a href="publication_report.php" class="block">
+                <button class="bg-purple-600 text-white px-8 py-4 rounded-xl shadow-lg hover:bg-purple-700 transition-colors duration-200 text-lg font-medium w-full sm:w-64 flex items-center justify-center">
+                    <i class="fas fa-chart-bar mr-3"></i> จัดทำรายงาน
+                </button>
+            </a>
         </div>
-    </div>
+        </div>
 </main>
 </div>
 
-<!-- Notification Modal -->
 <div id="notification-modal" class="fixed inset-0 bg-gray-900 bg-opacity-50 hidden z-50 flex items-center justify-center">
     <div class="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4 overflow-hidden transform transition-all">
         <div class="flex justify-between items-center p-5 border-b bg-blue-50">
@@ -270,14 +279,13 @@ if (isset($_GET['update_status']) && $_GET['update_status'] === 'success_read') 
                 <p class="text-gray-500 text-center py-4">ไม่มีข้อความแจ้งเตือน</p>
             <?php else: ?>
                 <?php foreach ($notifications as $notification): ?>
-                    <div class="p-3 rounded-lg border 
+                    <div class="p-3 rounded-lg border
                         <?= $notification['is_read'] ? 'bg-gray-50 border-gray-200 text-gray-700' : 'bg-blue-100 border-blue-300 font-semibold shadow-sm'; ?>">
                         <p class="text-sm flex items-center">
                             <i class="<?= $notification['is_read'] ? 'far fa-envelope-open text-gray-500' : 'fas fa-envelope text-blue-600'; ?> mr-2"></i>
                             <span class="font-bold">ข้อความ:</span>
                         </p>
-                        <!-- ข้อความที่บันทึกไว้ใน DB ซึ่งรวม Sender เข้ามาแล้ว -->
-                        <p class="mt-1 ml-5 text-base leading-snug break-words"><?= $notification['message']; ?></p> 
+                        <p class="mt-1 ml-5 text-base leading-snug break-words"><?= $notification['message']; ?></p>
                         <p class="text-xs text-right mt-1 <?= $notification['is_read'] ? 'text-gray-500' : 'text-blue-700'; ?>">
                             <?= $notification['time']; ?>
                         </p>
@@ -285,12 +293,11 @@ if (isset($_GET['update_status']) && $_GET['update_status'] === 'success_read') 
                 <?php endforeach; ?>
             <?php endif; ?>
         </div>
-        
+      
         <div class="p-3 border-t flex justify-end bg-gray-50">
-            <!-- Form สำหรับส่งค่า Mark All As Read -->
             <form method="POST" action="Home-PR.php" onsubmit="return confirm('คุณต้องการทำเครื่องหมายว่าอ่านแล้วทั้งหมดหรือไม่?');">
                 <input type="hidden" name="mark_read_all" value="1">
-                <button type="submit" 
+                <button type="submit"
                         class="text-blue-600 hover:text-blue-800 text-sm font-medium py-2 px-3 rounded-lg hover:bg-blue-100 transition duration-150"
                         <?= $unread_count === 0 ? 'disabled' : '' ?>>
                     <i class="fas fa-check-double mr-1"></i> ทำเครื่องหมายว่าอ่านแล้วทั้งหมด
