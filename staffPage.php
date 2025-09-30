@@ -58,7 +58,8 @@ $search_query = $_GET['search'] ?? '';
 // NEW: รับค่าตัวกรองประเภทผลงาน (pub_type)
 $selected_type = $_GET['pub_type'] ?? 'all'; 
 
-// === เริ่มดึงข้อมูลจริงสำหรับตัวกรอง ===
+// === เริ่มดึงข้อมูลจริงสำหรับตัวกรอง (Quick Filters) ===
+// ข้อมูลเหล่านี้จะถูกดึงมาเสมอเพื่อให้ Quick Filters แสดงผลทันที
 
 // ดึงข้อมูลอาจารย์ที่มีผลงานจริง พร้อมนับจำนวนผลงาน (Top 5 Authors)
 $filter_authors = [];
@@ -127,8 +128,7 @@ if (!$db_error) {
 // === สิ้นสุดการดึงข้อมูลจริงสำหรับตัวกรอง ===
 
 // 4. การจัดการ POST Request เพื่ออนุมัติ/ปฏิเสธ (หากฟอร์มนี้ถูกใช้ร่วมกับหน้า approve)
-// ... [โค้ดส่วนนี้ยังคงเดิม] ...
-
+// โค้ดส่วนนี้ไม่ได้ถูกเรียกใช้จากหน้านี้โดยตรง แต่เก็บไว้เพื่อความสมบูรณ์
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$db_error) {
     if (isset($_POST['action'], $_POST['pub_id'])) {
         $pub_id = (int)$_POST['pub_id'];
@@ -168,17 +168,44 @@ if (isset($_GET['update_status']) && $_GET['update_status'] === 'success') {
 }
 
 // =================================================================
-// 5. โค้ดส่วนหลัก: การจัดการการค้นหาผลงาน (อัปเดตเงื่อนไขตัวกรองประเภท)
+// 5. โค้ดส่วนหลัก: การจัดการการค้นหาและดึงผลงาน (ถูกรันเสมอ)
 // =================================================================
 $search_results = [];
-if ($search_query && !$db_error) {
-    // เตรียมคำค้นหาแบบ Fuzzy Match
-    $search_param = "%" . $search_query . "%";
+if (!$db_error) {
     
-    // ตรวจสอบว่าเป็นตัวเลข 4 หลักหรือไม่ (ปี) เพื่อใช้ในการค้นหา publish_year
-    $is_year = (bool) preg_match('/^\d{4}$/', $search_query);
+    $where_clauses = [];
+    $params = [];
+    $types = '';
+    
+    // 1. Search Query Condition (ใช้เงื่อนไขค้นหาก็ต่อเมื่อมีคำค้นหา)
+    if (!empty($search_query)) {
+        $search_param = "%" . $search_query . "%";
+        $is_year = (bool) preg_match('/^\d{4}$/', $search_query);
 
-    // SQL: ค้นหาใน Title, Author Name (first_name, last_name), Year, และเพิ่มเงื่อนไข Type
+        // เงื่อนไขค้นหาใน Title, first_name, last_name, และ publish_year
+        $search_condition = " (p.title LIKE ? OR u.first_name LIKE ? OR u.last_name LIKE ? ";
+        $params[] = $search_param; $types .= 's';
+        $params[] = $search_param; $types .= 's';
+        $params[] = $search_param; $types .= 's';
+        
+        if ($is_year) {
+            $search_condition .= " OR p.publish_year = ? ";
+            $params[] = $search_query; $types .= 's';
+        }
+        $search_condition .= ") ";
+        $where_clauses[] = $search_condition;
+    }
+
+    // 2. Type Filter Condition (ใช้ตัวกรองประเภทก็ต่อเมื่อไม่ได้เลือก 'all')
+    if ($selected_type !== 'all' && array_key_exists($selected_type, $publication_types)) {
+        $where_clauses[] = " p.type = ? ";
+        $params[] = $selected_type; $types .= 's';
+    }
+
+    // สร้างส่วน WHERE ของ SQL
+    $where_sql = count($where_clauses) > 0 ? " WHERE " . implode(" AND ", $where_clauses) : "";
+
+    // SQL: ดึงข้อมูลผลงาน
     $sql_search = "
         SELECT 
             p.Pub_id,
@@ -191,35 +218,13 @@ if ($search_query && !$db_error) {
             u.last_name
         FROM Publication p
         JOIN User u ON p.Author_id = u.User_id
-        WHERE
-            (p.title LIKE ? OR u.first_name LIKE ? OR u.last_name LIKE ? " . 
-            ($is_year ? "OR p.publish_year = ?" : "") . ")
-            " . ($selected_type !== 'all' ? " AND p.type = ?" : "") . " 
+        " . $where_sql . " 
         ORDER BY p.publish_year DESC, p.title ASC";
 
     $stmt_search = $conn->prepare($sql_search);
 
     if ($stmt_search) {
-        
-        $params = [];
-        $types = '';
-
-        // 1. Search terms (Always 3 strings)
-        $params[] = $search_param; $types .= 's';
-        $params[] = $search_param; $types .= 's';
-        $params[] = $search_param; $types .= 's';
-
-        // 2. Year term (Conditional string)
-        if ($is_year) {
-            $params[] = $search_query; $types .= 's';
-        }
-        
-        // 3. Type filter (Conditional string)
-        if ($selected_type !== 'all' && array_key_exists($selected_type, $publication_types)) {
-            $params[] = $selected_type; $types .= 's';
-        }
-
-        // Bind parameters dynamically using the spread operator
+        // Bind parameters dynamically
         if (!empty($params)) {
              $stmt_search->bind_param($types, ...$params); 
         }
@@ -440,93 +445,106 @@ if ($search_query && !$db_error) {
                 </div>
             </div>
             
-            <!-- ส่วนแสดงผลการค้นหาจริง -->
-            <?php if ($search_query): ?>
-                <div class="mt-10">
-                    <h2 class="text-2xl font-bold text-gray-800 mb-6 border-b pb-2">
-                        ผลการค้นหาสำหรับ "<span class="text-blue-600"><?= htmlspecialchars($search_query); ?></span>" (พบ <?= count($search_results); ?> รายการ)
-                    </h2>
+            <!-- ส่วนแสดงผลการค้นหาจริง (แสดงผลเสมอ) -->
+            <div class="mt-10">
+                <?php 
+                    $header_title = "ผลงานตีพิมพ์ทั้งหมดในระบบ";
+                    // ปรับหัวข้อตามเงื่อนไขการค้นหา/การกรอง
+                    if (!empty($search_query) && $selected_type !== 'all') {
+                        $header_title = "ผลการค้นหาสำหรับ \"<span class='text-blue-600'>" . htmlspecialchars($search_query) . "</span>\" ในประเภท **" . htmlspecialchars($publication_types[$selected_type] ?? $selected_type) . "**";
+                    } elseif (!empty($search_query)) {
+                        $header_title = "ผลการค้นหาสำหรับ \"<span class='text-blue-600'>" . htmlspecialchars($search_query) . "</span>\"";
+                    } elseif ($selected_type !== 'all') {
+                        $header_title = "ผลงานตีพิมพ์ในประเภท **" . htmlspecialchars($publication_types[$selected_type] ?? $selected_type) . "**";
+                    }
+                ?>
+                <h2 class="text-2xl font-bold text-gray-800 mb-6 border-b pb-2">
+                    <?= $header_title; ?> (พบ <?= count($search_results); ?> รายการ)
+                </h2>
+                
+                <!-- NEW: Publication Type Filter Form -->
+                <form method="GET" action="staffPage.php" class="mb-6 p-4 bg-gray-50 rounded-xl border border-gray-200 shadow-inner flex flex-col md:flex-row items-stretch md:items-center space-y-3 md:space-y-0 md:space-x-4">
+                    <label for="pub_type_filter" class="text-gray-700 font-semibold flex-shrink-0">กรองตามประเภทผลงาน:</label>
                     
-                    <!-- NEW: Publication Type Filter Form -->
-                    <form method="GET" action="staffPage.php" class="mb-6 p-4 bg-gray-50 rounded-xl border border-gray-200 shadow-inner flex flex-col md:flex-row items-stretch md:items-center space-y-3 md:space-y-0 md:space-x-4">
-                        <label for="pub_type_filter" class="text-gray-700 font-semibold flex-shrink-0">กรองตามประเภทผลงาน:</label>
-                        
-                        <!-- Hidden input to maintain the original search query -->
-                        <input type="hidden" name="search" value="<?= htmlspecialchars($search_query); ?>">
+                    <!-- Hidden input to maintain the original search query -->
+                    <input type="hidden" name="search" value="<?= htmlspecialchars($search_query); ?>">
 
-                        <!-- Dropdown Filter -->
-                        <select name="pub_type" id="pub_type_filter" 
-                                class="border border-gray-300 rounded-lg p-2.5 text-base focus:ring-blue-500 focus:border-blue-500 transition w-full md:w-auto flex-grow">
-                            <?php foreach($publication_types as $key => $value): ?>
-                                <option value="<?= htmlspecialchars($key) ?>"
-                                        <?= $selected_type === $key ? 'selected' : '' ?>>
-                                    <?= htmlspecialchars($value) ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                        
-                        <button type="submit" class="bg-blue-600 text-white py-2 px-4 rounded-lg font-semibold hover:bg-blue-700 transition-colors duration-200 flex-shrink-0 shadow-md">
-                            <i class="fas fa-filter mr-1"></i> ใช้ตัวกรอง
-                        </button>
-                        <?php if ($selected_type !== 'all'): ?>
-                            <a href="staffPage.php?search=<?= urlencode($search_query); ?>" class="text-red-500 hover:text-red-700 transition text-sm flex items-center flex-shrink-0 justify-center md:justify-start">
-                                <i class="fas fa-times-circle mr-1"></i> ล้างตัวกรองประเภท
-                            </a>
-                        <?php endif; ?>
-                    </form>
-                    <!-- END: Publication Type Filter Form -->
-
-
-                    <?php if (!empty($search_results)): ?>
-                        <div class="space-y-6">
-                            <?php foreach ($search_results as $pub): ?>
-                                <div class="bg-white p-5 rounded-xl shadow-lg border-l-4 border-blue-600 hover:shadow-xl transition-shadow duration-300">
-                                    <div class="flex justify-between items-start">
-                                        <h3 class="text-xl font-bold text-blue-800 mb-2"><?= htmlspecialchars($pub['title']); ?></h3>
-                                        <!-- แสดงสถานะ -->
-                                        <span class="text-sm font-semibold px-3 py-1 rounded-full 
-                                            <?= $pub['status'] === 'approved' ? 'bg-green-100 text-green-700' : 
-                                               ($pub['status'] === 'waiting' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'); ?>">
-                                            <?= htmlspecialchars($pub['status']); ?>
-                                        </span>
-                                    </div>
-                                    <p class="text-gray-600 mb-1"><i class="fas fa-user-tie mr-2 text-gray-400"></i> **อาจารย์:** <?= htmlspecialchars($pub['first_name'] . ' ' . $pub['last_name']); ?></p>
-                                    <p class="text-gray-600 mb-1"><i class="fas fa-calendar-alt mr-2 text-gray-400"></i> **ปีที่เผยแพร่:** <?= htmlspecialchars($pub['publish_year']); ?></p>
-                                    <p class="text-gray-600"><i class="fas fa-tag mr-2 text-gray-400"></i> **ประเภท:** <?= htmlspecialchars($pub['type']); ?></p>
-                                    
-                                    <!-- ปุ่มดูรายละเอียด (เปลี่ยนเป็นปุ่มเปิด Modal PDF) -->
-                                    <div class="mt-3 text-right">
-                                        <?php
-                                            // ⚠️ สำคัญ: ใช้ file_path ตาม DB ที่ให้มา
-                                            $filePath = htmlspecialchars($pub['file_path'] ?? ''); 
-                                            $pdfTitle = htmlspecialchars($pub['title']);
-                                        ?>
-                                        <?php if (!empty($filePath)): ?>
-                                            <button type="button" 
-                                                    onclick="openPdfModal('<?= $pdfTitle; ?>', '<?= $filePath; ?>')"
-                                                    class="inline-flex items-center text-white bg-blue-600 hover:bg-blue-700 font-semibold transition-colors px-3 py-1 rounded-lg shadow-md">
-                                                ดูรายละเอียด PDF <i class="fas fa-file-pdf ml-2 text-sm"></i>
-                                            </button>
-                                        <?php else: ?>
-                                             <span class="text-sm text-red-500 italic">ไม่มีไฟล์ PDF</span>
-                                        <?php endif; ?>
-                                    </div>
-                                </div>
-                            <?php endforeach; ?>
-                        </div>
-                    <?php else: ?>
-                        <div class="p-6 bg-yellow-50 border border-yellow-300 rounded-xl text-yellow-800 shadow-md">
-                            <p class="font-semibold">
-                                <i class="fas fa-exclamation-triangle mr-2"></i> 
-                                ไม่พบผลงานที่ตรงกับคำค้นหา "<?= htmlspecialchars($search_query); ?>" 
-                                <?php if ($selected_type !== 'all'): ?>
-                                    ในประเภท **<?= htmlspecialchars($publication_types[$selected_type] ?? $selected_type); ?>**
-                                <?php endif; ?>
-                            </p>
-                        </div>
+                    <!-- Dropdown Filter -->
+                    <select name="pub_type" id="pub_type_filter" 
+                            class="border border-gray-300 rounded-lg p-2.5 text-base focus:ring-blue-500 focus:border-blue-500 transition w-full md:w-auto flex-grow">
+                        <?php foreach($publication_types as $key => $value): ?>
+                            <option value="<?= htmlspecialchars($key) ?>"
+                                    <?= $selected_type === $key ? 'selected' : '' ?>>
+                                <?= htmlspecialchars($value) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                    
+                    <button type="submit" class="bg-blue-600 text-white py-2 px-4 rounded-lg font-semibold hover:bg-blue-700 transition-colors duration-200 flex-shrink-0 shadow-md">
+                        <i class="fas fa-filter mr-1"></i> ใช้ตัวกรอง
+                    </button>
+                    <?php if ($selected_type !== 'all' || !empty($search_query)): ?>
+                        <!-- ปุ่มล้างตัวกรองทั้งหมด -->
+                        <a href="staffPage.php" class="text-red-500 hover:text-red-700 transition text-sm flex items-center flex-shrink-0 justify-center md:justify-start">
+                            <i class="fas fa-times-circle mr-1"></i> ล้างการค้นหา/ตัวกรอง
+                        </a>
                     <?php endif; ?>
-                </div>
-            <?php endif; ?>
+                </form>
+                <!-- END: Publication Type Filter Form -->
+
+
+                <?php if (!empty($search_results)): ?>
+                    <div class="space-y-6">
+                        <?php foreach ($search_results as $pub): ?>
+                            <div class="bg-white p-5 rounded-xl shadow-lg border-l-4 border-blue-600 hover:shadow-xl transition-shadow duration-300">
+                                <div class="flex justify-between items-start">
+                                    <h3 class="text-xl font-bold text-blue-800 mb-2"><?= htmlspecialchars($pub['title']); ?></h3>
+                                    <!-- แสดงสถานะ -->
+                                    <span class="text-sm font-semibold px-3 py-1 rounded-full 
+                                        <?= $pub['status'] === 'approved' ? 'bg-green-100 text-green-700' : 
+                                           ($pub['status'] === 'waiting' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'); ?>">
+                                        <?= htmlspecialchars($pub['status']); ?>
+                                    </span>
+                                </div>
+                                <p class="text-gray-600 mb-1"><i class="fas fa-user-tie mr-2 text-gray-400"></i> **อาจารย์:** <?= htmlspecialchars($pub['first_name'] . ' ' . $pub['last_name']); ?></p>
+                                <p class="text-gray-600 mb-1"><i class="fas fa-calendar-alt mr-2 text-gray-400"></i> **ปีที่เผยแพร่:** <?= htmlspecialchars($pub['publish_year']); ?></p>
+                                <p class="text-gray-600"><i class="fas fa-tag mr-2 text-gray-400"></i> **ประเภท:** <?= htmlspecialchars($pub['type']); ?></p>
+                                
+                                <!-- ปุ่มดูรายละเอียด (เปลี่ยนเป็นปุ่มเปิด Modal PDF) -->
+                                <div class="mt-3 text-right">
+                                    <?php
+                                        // ⚠️ สำคัญ: ใช้ file_path ตาม DB ที่ให้มา
+                                        $filePath = htmlspecialchars($pub['file_path'] ?? ''); 
+                                        $pdfTitle = htmlspecialchars($pub['title']);
+                                    ?>
+                                    <?php if (!empty($filePath)): ?>
+                                        <button type="button" 
+                                                onclick="openPdfModal('<?= $pdfTitle; ?>', '<?= $filePath; ?>')"
+                                                class="inline-flex items-center text-white bg-blue-600 hover:bg-blue-700 font-semibold transition-colors px-3 py-1 rounded-lg shadow-md">
+                                            ดูรายละเอียด PDF <i class="fas fa-file-pdf ml-2 text-sm"></i>
+                                        </button>
+                                    <?php else: ?>
+                                         <span class="text-sm text-red-500 italic">ไม่มีไฟล์ PDF</span>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php else: ?>
+                    <div class="p-6 bg-yellow-50 border border-yellow-300 rounded-xl text-yellow-800 shadow-md">
+                        <p class="font-semibold">
+                            <i class="fas fa-exclamation-triangle mr-2"></i> 
+                            ไม่พบผลงานที่ตรงกับเงื่อนไขการค้นหา
+                            <?php if (!empty($search_query)): ?>
+                                สำหรับคำค้นหา "<?= htmlspecialchars($search_query); ?>" 
+                            <?php endif; ?>
+                            <?php if ($selected_type !== 'all'): ?>
+                                ในประเภท **<?= htmlspecialchars($publication_types[$selected_type] ?? $selected_type); ?>**
+                            <?php endif; ?>
+                        </p>
+                    </div>
+                <?php endif; ?>
+            </div>
         </section>
     </main>
 
@@ -618,15 +636,6 @@ if ($search_query && !$db_error) {
         if (e.target === pdfModal) {
             closePdfModal();
         }
-    });
-    
-    // อัปเดตฟอร์มหลักเมื่อมีการคลิก Quick Filter
-    document.querySelectorAll('.space-y-3 > div').forEach(item => {
-        item.addEventListener('click', function(e) {
-            // ป้องกันการทำงานซ้ำซ้อน เพราะเราใช้ onclick ใน HTML ด้วย
-            e.preventDefault(); 
-            // โค้ดที่นี่จะไม่รันเนื่องจากโค้ดเดิมใช้ onclick ใน HTML แต่เป็นหลักการที่ดีในการใช้ JS
-        });
     });
 </script>
 

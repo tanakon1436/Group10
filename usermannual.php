@@ -59,7 +59,7 @@
 
         <!-- PDF Viewer -->
         <div class="h-[70vh] min-h-[500px] w-full">
-             <object data="./uploads/user_manual.pdf" type="application/pdf" width="100%" height="100%" class="border rounded-lg shadow-inner">
+             <object data="./uploads/G10_Manual.pdf" type="application/pdf" width="100%" height="100%" class="border rounded-lg shadow-inner">
                 <div class="p-8 text-center bg-red-50 border border-red-200 rounded-lg">
                     <p class="text-lg text-red-700 font-semibold mb-3">
                         <i class="fas fa-exclamation-triangle mr-2"></i> ไม่สามารถแสดงไฟล์ PDF ได้
@@ -67,7 +67,7 @@
                     <p class="text-gray-600">
                         เบราว์เซอร์ของคุณอาจไม่รองรับการแสดงผล PDF โดยตรง กรุณาดาวน์โหลดคู่มือเพื่อดู
                     </p>
-                    <a href="./uploads/user_manual.pdf" target="_blank" class="mt-4 inline-block bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition duration-150">
+                    <a href="./uploads/G10_Manual.pdf" target="_blank" class="mt-4 inline-block bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition duration-150">
                         <i class="fas fa-download mr-2"></i> ดาวน์โหลดคู่มือ (manual.pdf)
                     </a>
                 </div>
