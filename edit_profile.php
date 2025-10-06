@@ -99,26 +99,75 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $status_type = 'error';
         }
     } 
-    // B2. ถ้าไม่ใช่ ก็จะเป็น POST สำหรับอัปเดตโปรไฟล์
+    // B2. ถ้าไม่ใช่ ก็จะเป็น POST สำหรับอัปเดตโปรไฟล์และรหัสผ่าน
     else {
+        // ดึงค่าทั้งหมดจากฟอร์ม
         $first_name = trim($_POST['first_name'] ?? '');
         $last_name = trim($_POST['last_name'] ?? '');
         $email = trim($_POST['email'] ?? '');
         $tel = trim($_POST['tel'] ?? '');
         $department = trim($_POST['department'] ?? '');
-        
+        $password_new = $_POST['password_new'] ?? ''; // ดึงรหัสผ่านใหม่
+
         if (empty($first_name) || empty($last_name) || empty($email) || empty($department)) {
             $message = 'กรุณากรอกข้อมูลชื่อ, นามสกุล, อีเมล และหน่วยงานให้ครบถ้วน';
             $message_type = 'error';
         } else {
+            // --- 1. เตรียม Query และค่าเริ่มต้น (ข้อมูลโปรไฟล์) ---
+            $update_fields = [
+                "first_name = ?", 
+                "last_name = ?", 
+                "email = ?", 
+                "tel = ?", 
+                "Department = ?"
+            ];
+            $update_values = [
+                $first_name, 
+                $last_name, 
+                $email, 
+                $tel, 
+                $department
+            ];
+            $update_types = "sssss"; // ประเภทข้อมูลสำหรับ 5 คอลัมน์แรก (string x 5)
+
+            // --- 2. การจัดการรหัสผ่านใหม่ (ถ้ามี) ---
+            if (!empty($password_new)) {
+                // *** คำเตือน: โค้ดนี้จัดเก็บรหัสผ่านแบบ Plain Text ตามที่คุณร้องขอ ***
+                // *** ซึ่งเป็นอันตรายอย่างยิ่งและไม่ควรใช้กับระบบจริง ***
+                
+                $update_fields[] = "password = ?";
+                // ใช้รหัสผ่านใหม่ (Plain Text) ในการอัปเดตฐานข้อมูล
+                $update_values[] = $password_new; 
+                $update_types .= "s";
+            }
+            
+            // --- 3. สร้าง Query และดำเนินการอัปเดต ---
             try {
-                $update_sql = "UPDATE User SET first_name = ?, last_name = ?, email = ?, tel = ?, Department = ? WHERE User_id = ?";
+                // ผสาน fields ต่างๆ ด้วยเครื่องหมาย comma
+                $set_clause = implode(", ", $update_fields);
+                
+                // สร้าง SQL ที่สมบูรณ์
+                $update_sql = "UPDATE User SET $set_clause WHERE User_id = ?";
+                
+                // เพิ่ม User_id เข้าไปเป็นค่าสุดท้ายใน array และเพิ่มประเภทข้อมูล (i)
+                $update_values[] = $user_id;
+                $update_types .= "i"; 
+                
                 $stmt = $conn->prepare($update_sql);
-                $stmt->bind_param("sssssi", $first_name, $last_name, $email, $tel, $department, $user_id);
-                $stmt->execute();
+                
+                // ใช้ bind_param ด้วย array ค่าที่ยืดหยุ่น
+                $bind_params = array_merge([$update_types], $update_values);
+                $stmt->bind_param(...$bind_params);
+                
+                if ($stmt->execute()) {
+                    $message = 'บันทึกการแก้ไขข้อมูลส่วนตัวและรหัสผ่านเรียบร้อยแล้ว!';
+                    $message_type = 'success';
+                } else {
+                    $message = "เกิดข้อผิดพลาดในการบันทึกข้อมูล: " . $stmt->error;
+                    $message_type = 'error';
+                }
                 $stmt->close();
-                $message = 'บันทึกการแก้ไขข้อมูลส่วนตัวเรียบร้อยแล้ว!';
-                $message_type = 'success';
+
             } catch (mysqli_sql_exception $e) {
                 $message = "เกิดข้อผิดพลาดในการบันทึกข้อมูล: " . $e->getMessage();
                 $message_type = 'error';
@@ -228,7 +277,6 @@ $conn->close();
         <h1 class="text-3xl font-bold text-gray-800">แก้ไขข้อมูลส่วนตัว</h1>
         
         <div class="flex items-center space-x-4 right-icons">
-            <!-- Bell Icon with Badge -->
             <a href="#" id="notification-bell" title="แจ้งเตือน" class="relative">
                 <i class="fas fa-bell text-2xl"></i>
                 <?php if ($unread_count > 0): ?>
@@ -246,7 +294,6 @@ $conn->close();
         </div>
     </header>
 
-    <!-- Display Area for Messages -->
     <?php if ($message): ?>
         <div class="p-4 mb-4 rounded-lg <?= $message_type === 'success' ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-red-100 text-red-700 border border-red-200'; ?>">
             <p class="font-semibold"><?= htmlspecialchars($message); ?></p>
@@ -312,6 +359,12 @@ $conn->close();
                        class="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-blue-500 focus:border-blue-500"
                        value="<?= htmlspecialchars($user_data['Department'] ?? ''); ?>">
             </div>
+            <div>
+                    <label for="password_new" class="block text-sm font-medium text-gray-700 mb-2">รหัสผ่านใหม่ (ว่างไว้หากไม่ต้องการเปลี่ยน)</label>
+                    <input type="password" id="password_new" name="password_new" 
+                           placeholder="********"
+                           class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition duration-150">
+                </div>
             <div class="pt-4 border-t border-gray-200">
                 <button type="submit" class="w-full sm:w-auto bg-blue-600 text-white px-6 py-3 rounded-xl shadow-lg hover:bg-blue-700 transition-colors duration-200 text-lg font-medium flex items-center justify-center">
                     <i class="fas fa-user-edit mr-3"></i> บันทึกการแก้ไขข้อมูล
@@ -323,7 +376,6 @@ $conn->close();
 </main>
 </div>
 
-<!-- Notification Modal -->
 <div id="notification-modal" class="fixed inset-0 bg-gray-900 bg-opacity-50 hidden z-50 flex items-center justify-center">
     <div class="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4 overflow-hidden transform transition-all">
         <div class="flex justify-between items-center p-5 border-b bg-blue-50">
@@ -365,7 +417,6 @@ $conn->close();
     </div>
 </div>
 
-<!-- JavaScript for Modal -->
 <script>
     const bellIcon = document.getElementById('notification-bell');
     const modal = document.getElementById('notification-modal');

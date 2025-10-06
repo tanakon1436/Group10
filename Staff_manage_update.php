@@ -143,10 +143,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $conn) {
 
     // จัดการ Password
     if (!empty($password_new)) {
-        // แนะนำให้ใช้ password_hash เพื่อความปลอดภัย แม้ว่าใน DB dump จะเป็น plain text
-        $hashed_password = password_hash($password_new, PASSWORD_DEFAULT);
+        // *** คำเตือน: รหัสผ่านจะไม่ถูกเข้ารหัส (Unhashed) และถูกจัดเก็บแบบ Plain Text ***
+        // *** การทำเช่นนี้ไม่แนะนำอย่างยิ่งสำหรับรหัสผ่านของผู้ใช้ ***
+        
         $update_fields[] = "password = ?";
-        $update_values[] = $hashed_password;
+        // นำรหัสผ่านใหม่ (ข้อความธรรมดา) เข้าไปในอาร์เรย์ของค่าที่จะอัปเดต
+        $update_values[] = $password_new; 
         $update_types .= "s";
     }
 
@@ -376,7 +378,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $conn) {
                     <input type="password" id="password_new" name="password_new" 
                            placeholder="********"
                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition duration-150">
-                    <p class="text-xs text-gray-500 mt-1">หากใส่รหัสผ่านใหม่ ระบบจะทำการเข้ารหัส (Hash) ก่อนบันทึก</p>
                 </div>
 
                 <!-- Submit Button -->
